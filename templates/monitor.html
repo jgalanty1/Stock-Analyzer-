@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEC Daily Monitor</title>
+    <style>
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --bg-input: #0f3460;
+            --accent: #e94560;
+            --accent-green: #00d9a5;
+            --accent-yellow: #ffc107;
+            --accent-blue: #4fc3f7;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: 'Segoe UI', Tahoma, sans-serif; background: var(--bg-dark); color: var(--text-primary); min-height: 100vh; }
+
+        nav {
+            background: var(--bg-card);
+            padding: 12px 24px;
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        nav a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 14px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+        nav a:hover { color: var(--text-primary); background: var(--bg-input); }
+        nav a.active { color: var(--accent-yellow); background: var(--bg-input); }
+
+        .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+
+        h1 { font-size: 28px; margin-bottom: 4px; }
+        h1 span { color: var(--accent-yellow); }
+        .subtitle { color: var(--text-secondary); margin-bottom: 24px; font-size: 14px; }
+
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        .card h2 {
+            font-size: 16px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .status-row:last-child { border-bottom: none; }
+        .status-label { color: var(--text-secondary); font-size: 14px; }
+        .status-value { font-weight: 600; font-size: 14px; }
+
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+        .badge-active { background: rgba(0,217,165,0.2); color: var(--accent-green); }
+        .badge-inactive { background: rgba(160,160,160,0.2); color: var(--text-secondary); }
+        .badge-success { background: rgba(0,217,165,0.15); color: var(--accent-green); }
+        .badge-error { background: rgba(233,69,96,0.2); color: var(--accent); }
+        .badge-no-new { background: rgba(79,195,247,0.15); color: var(--accent-blue); }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-primary { background: var(--accent-green); color: #000; }
+        .btn-primary:hover:not(:disabled) { background: #00c49a; }
+        .btn-danger { background: var(--accent); color: #fff; }
+        .btn-danger:hover:not(:disabled) { background: #d03050; }
+        .btn-secondary { background: var(--bg-input); color: var(--accent-blue); }
+        .btn-secondary:hover:not(:disabled) { background: #1a4a80; }
+
+        .btn-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+
+        .config-field {
+            margin-bottom: 14px;
+        }
+        .config-field label {
+            display: block;
+            color: var(--text-secondary);
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .config-field input[type="time"],
+        .config-field input[type="text"] {
+            background: var(--bg-input);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text-primary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 100%;
+        }
+
+        .toggle-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 0;
+        }
+        .toggle-label { font-size: 14px; }
+        .toggle {
+            position: relative;
+            width: 44px;
+            height: 24px;
+        }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle .slider {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--bg-input);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .toggle .slider:before {
+            content: "";
+            position: absolute;
+            width: 18px; height: 18px;
+            left: 3px; bottom: 3px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+        .toggle input:checked + .slider { background: var(--accent-green); }
+        .toggle input:checked + .slider:before { transform: translateX(20px); background: #fff; }
+
+        /* Log table */
+        .log-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .log-table th {
+            text-align: left;
+            color: var(--text-secondary);
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-weight: 600;
+        }
+        .log-table td {
+            padding: 8px 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .log-table tr:hover td { background: rgba(255,255,255,0.03); }
+
+        .filings-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .filing-item {
+            padding: 10px 12px;
+            background: var(--bg-input);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .filing-item .ticker {
+            font-weight: 700;
+            color: var(--accent-green);
+            margin-right: 8px;
+        }
+        .filing-item .form-type {
+            color: var(--accent-yellow);
+            font-weight: 600;
+        }
+        .filing-item .date {
+            color: var(--text-secondary);
+            float: right;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 32px;
+            font-size: 14px;
+        }
+
+        .pulse {
+            display: inline-block;
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            margin-right: 6px;
+            animation: pulse-anim 1.5s infinite;
+        }
+        .pulse-green { background: var(--accent-green); }
+        .pulse-off { background: var(--text-secondary); animation: none; }
+        @keyframes pulse-anim {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .full-width { grid-column: 1 / -1; }
+    </style>
+</head>
+<body>
+    <nav>
+        <a href="/">← Analyzer</a>
+        <a href="/scraper">Scraper</a>
+        <a href="/monitor" class="active">📡 Daily Monitor</a>
+    </nav>
+
+    <div class="container">
+        <h1>📡 <span>Daily Filing Monitor</span></h1>
+        <p class="subtitle">
+            Automatically checks SEC EDGAR once per day for new 10-K/10-Q filings from your company universe.
+        </p>
+
+        <div class="grid">
+            <!-- Scheduler Status Card -->
+            <div class="card">
+                <h2>Scheduler Status</h2>
+                <div class="status-row">
+                    <span class="status-label">Status</span>
+                    <span id="scheduler-status">
+                        <span class="pulse pulse-off"></span>
+                        <span class="badge badge-inactive">Loading...</span>
+                    </span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Scheduled Time</span>
+                    <span class="status-value" id="run-time-display">--:--</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Last Run</span>
+                    <span class="status-value" id="last-run-at">Never</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Last Result</span>
+                    <span id="last-run-status"><span class="badge badge-inactive">—</span></span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Last Message</span>
+                    <span class="status-value" id="last-run-msg" style="font-size:12px;max-width:60%;text-align:right;">—</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Total Runs</span>
+                    <span class="status-value" id="total-runs">0</span>
+                </div>
+                <div class="status-row">
+                    <span class="status-label">Total Filings Found</span>
+                    <span class="status-value" id="total-found">0</span>
+                </div>
+
+                <div class="btn-row">
+                    <button class="btn btn-primary" id="btn-start" onclick="startMonitor()">▶ Start Monitor</button>
+                    <button class="btn btn-danger" id="btn-stop" onclick="stopMonitor()" disabled>■ Stop</button>
+                    <button class="btn btn-secondary" id="btn-run-now" onclick="runNow()">⚡ Run Now</button>
+                </div>
+            </div>
+
+            <!-- Configuration Card -->
+            <div class="card">
+                <h2>Configuration</h2>
+
+                <div class="config-field">
+                    <label>Daily Run Time (24h)</label>
+                    <input type="time" id="cfg-run-time" value="06:00" />
+                </div>
+
+                <div class="toggle-row">
+                    <span class="toggle-label">Auto-analyze new filings</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-auto-analyze" />
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <div class="toggle-row">
+                    <span class="toggle-label">Use LLM for auto-analysis</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="cfg-use-llm" />
+                        <span class="slider"></span>
+                    </label>
+                </div>
+
+                <p style="color:var(--text-secondary);font-size:12px;margin-top:12px;">
+                    LLM analysis requires an Anthropic API key set on the Analyzer page.
+                    Without it, auto-analysis uses regex mode.
+                </p>
+
+                <div class="btn-row">
+                    <button class="btn btn-primary" onclick="saveConfig()">💾 Save Settings</button>
+                </div>
+
+                <div style="margin-top:20px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.06);">
+                    <h2 style="margin-bottom:8px;">Prerequisites</h2>
+                    <div class="status-row">
+                        <span class="status-label">Company Universe</span>
+                        <span class="status-value" id="universe-count">—</span>
+                    </div>
+                    <p style="color:var(--text-secondary);font-size:12px;margin-top:8px;">
+                        The monitor needs a company universe to know which filings to watch.
+                        <a href="/scraper" style="color:var(--accent-green);">Build one in the Scraper →</a>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Recent Filings Card -->
+            <div class="card full-width">
+                <h2>New Filings Detected</h2>
+                <div id="new-filings-container">
+                    <div class="empty-state">No new filings detected yet. Start the monitor or click "Run Now".</div>
+                </div>
+            </div>
+
+            <!-- Run Log Card -->
+            <div class="card full-width">
+                <h2>Run History</h2>
+                <div id="log-container" style="overflow-x:auto;">
+                    <div class="empty-state">No runs yet.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pollInterval = null;
+
+        // ── Load status ─────────────────────────────────────────
+        async function loadStatus() {
+            try {
+                const resp = await fetch('/api/monitor/status');
+                const data = await resp.json();
+                updateUI(data);
+            } catch (e) {
+                console.error('Status fetch failed:', e);
+            }
+        }
+
+        function updateUI(data) {
+            const state = data.state || {};
+            const running = data.scheduler_running;
+            const log = data.recent_log || [];
+
+            // Scheduler status
+            const statusEl = document.getElementById('scheduler-status');
+            if (running) {
+                statusEl.innerHTML = '<span class="pulse pulse-green"></span><span class="badge badge-active">ACTIVE</span>';
+            } else {
+                statusEl.innerHTML = '<span class="pulse pulse-off"></span><span class="badge badge-inactive">STOPPED</span>';
+            }
+
+            // Buttons
+            document.getElementById('btn-start').disabled = running;
+            document.getElementById('btn-stop').disabled = !running;
+
+            // State values
+            document.getElementById('run-time-display').textContent = state.run_time || '--:--';
+            document.getElementById('last-run-at').textContent = state.last_run_at || 'Never';
+            document.getElementById('total-runs').textContent = state.total_runs || 0;
+            document.getElementById('total-found').textContent = state.total_filings_found || 0;
+            document.getElementById('last-run-msg').textContent = state.last_run_message || '—';
+
+            // Last run status badge
+            const statusBadge = document.getElementById('last-run-status');
+            const s = state.last_run_status;
+            if (s === 'success') {
+                statusBadge.innerHTML = '<span class="badge badge-success">✓ Success</span>';
+            } else if (s === 'error') {
+                statusBadge.innerHTML = '<span class="badge badge-error">✗ Error</span>';
+            } else if (s === 'no_new') {
+                statusBadge.innerHTML = '<span class="badge badge-no-new">No New Filings</span>';
+            } else {
+                statusBadge.innerHTML = '<span class="badge badge-inactive">—</span>';
+            }
+
+            // Config fields
+            document.getElementById('cfg-run-time').value = state.run_time || '06:00';
+            document.getElementById('cfg-auto-analyze').checked = state.auto_analyze || false;
+            document.getElementById('cfg-use-llm').checked = state.use_llm_for_auto || false;
+
+            // Universe count (from scraper status)
+            loadUniverseCount();
+
+            // New filings from last result
+            renderNewFilings(data.last_result, log);
+
+            // Run log
+            renderLog(log);
+        }
+
+        async function loadUniverseCount() {
+            try {
+                const resp = await fetch('/api/scraper/status');
+                const data = await resp.json();
+                const count = data.total_companies || 0;
+                const el = document.getElementById('universe-count');
+                if (count > 0) {
+                    el.innerHTML = `<span style="color:var(--accent-green)">${count} companies</span>`;
+                } else {
+                    el.innerHTML = '<span style="color:var(--accent)">Not loaded</span>';
+                }
+            } catch(e) {
+                document.getElementById('universe-count').textContent = 'Error';
+            }
+        }
+
+        function renderNewFilings(lastResult, log) {
+            const container = document.getElementById('new-filings-container');
+
+            // Collect filings from last result + recent log entries
+            let allFilings = [];
+            if (lastResult && lastResult.filings) {
+                allFilings = allFilings.concat(lastResult.filings);
+            }
+            for (const entry of log.slice(-10)) {
+                if (entry.filings) {
+                    allFilings = allFilings.concat(entry.filings);
+                }
+            }
+
+            // Deduplicate by ticker+form+date
+            const seen = new Set();
+            const unique = [];
+            for (const f of allFilings) {
+                const key = `${f.ticker}-${f.form_type}-${f.filing_date}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    unique.push(f);
+                }
+            }
+
+            if (unique.length === 0) {
+                container.innerHTML = '<div class="empty-state">No new filings detected yet. Start the monitor or click "Run Now".</div>';
+                return;
+            }
+
+            // Sort by date descending
+            unique.sort((a, b) => (b.filing_date || '').localeCompare(a.filing_date || ''));
+
+            let html = '<div class="filings-list">';
+            for (const f of unique.slice(0, 50)) {
+                html += `
+                    <div class="filing-item">
+                        <span class="ticker">${f.ticker || 'N/A'}</span>
+                        <span class="form-type">${f.form_type || ''}</span>
+                        — ${f.company_name || ''}
+                        <span class="date">${f.filing_date || ''} · ${f.exchange || ''}</span>
+                    </div>
+                `;
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function renderLog(log) {
+            const container = document.getElementById('log-container');
+            if (!log || log.length === 0) {
+                container.innerHTML = '<div class="empty-state">No runs yet.</div>';
+                return;
+            }
+
+            // Reverse to show newest first
+            const sorted = [...log].reverse();
+
+            let html = `
+                <table class="log-table">
+                <thead><tr>
+                    <th>Date</th>
+                    <th>Time</th>
+                    <th>Status</th>
+                    <th>Found</th>
+                    <th>Downloaded</th>
+                    <th>Analyzed</th>
+                    <th>Errors</th>
+                </tr></thead><tbody>
+            `;
+            for (const entry of sorted.slice(0, 30)) {
+                const statusClass = entry.status === 'success' ? 'badge-success'
+                    : entry.status === 'error' ? 'badge-error' : 'badge-no-new';
+                const statusText = entry.status === 'no_new' ? 'No New' : entry.status;
+                html += `
+                    <tr>
+                        <td>${entry.date || ''}</td>
+                        <td>${(entry.timestamp || '').split(' ')[1] || ''}</td>
+                        <td><span class="badge ${statusClass}">${statusText}</span></td>
+                        <td>${entry.new_found || 0}</td>
+                        <td>${entry.downloaded || 0}</td>
+                        <td>${entry.analyzed || 0}</td>
+                        <td>${entry.errors || 0}</td>
+                    </tr>
+                `;
+            }
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        // ── Actions ─────────────────────────────────────────────
+        async function startMonitor() {
+            try {
+                const resp = await fetch('/api/monitor/start', { method: 'POST' });
+                const data = await resp.json();
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    loadStatus();
+                    startPolling();
+                }
+            } catch(e) { alert('Failed to start: ' + e); }
+        }
+
+        async function stopMonitor() {
+            try {
+                await fetch('/api/monitor/stop', { method: 'POST' });
+                loadStatus();
+                stopPolling();
+            } catch(e) { alert('Failed to stop: ' + e); }
+        }
+
+        async function runNow() {
+            const btn = document.getElementById('btn-run-now');
+            btn.disabled = true;
+            btn.textContent = '⏳ Running...';
+            try {
+                const resp = await fetch('/api/monitor/run-now', { method: 'POST' });
+                const data = await resp.json();
+                if (data.error) {
+                    alert(data.error);
+                    btn.disabled = false;
+                    btn.textContent = '⚡ Run Now';
+                } else {
+                    // Poll for results
+                    let checks = 0;
+                    const poll = setInterval(async () => {
+                        checks++;
+                        await loadStatus();
+                        if (checks > 120) { // 2 min timeout
+                            clearInterval(poll);
+                            btn.disabled = false;
+                            btn.textContent = '⚡ Run Now';
+                        }
+                        // Check if result arrived
+                        try {
+                            const sr = await fetch('/api/monitor/status');
+                            const sd = await sr.json();
+                            if (sd.last_result && sd.state.last_run_at) {
+                                clearInterval(poll);
+                                btn.disabled = false;
+                                btn.textContent = '⚡ Run Now';
+                            }
+                        } catch(e) {}
+                    }, 2000);
+                }
+            } catch(e) {
+                alert('Failed: ' + e);
+                btn.disabled = false;
+                btn.textContent = '⚡ Run Now';
+            }
+        }
+
+        async function saveConfig() {
+            const runTime = document.getElementById('cfg-run-time').value;
+            const autoAnalyze = document.getElementById('cfg-auto-analyze').checked;
+            const useLlm = document.getElementById('cfg-use-llm').checked;
+
+            try {
+                const resp = await fetch('/api/monitor/configure', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        run_time: runTime,
+                        auto_analyze: autoAnalyze,
+                        use_llm_for_auto: useLlm,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    loadStatus();
+                    // Brief visual feedback
+                    const btn = event.target;
+                    btn.textContent = '✓ Saved';
+                    setTimeout(() => { btn.textContent = '💾 Save Settings'; }, 1500);
+                }
+            } catch(e) { alert('Save failed: ' + e); }
+        }
+
+        // ── Polling ─────────────────────────────────────────────
+        function startPolling() {
+            if (pollInterval) return;
+            pollInterval = setInterval(loadStatus, 10000); // Every 10s
+        }
+        function stopPolling() {
+            if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+        }
+
+        // ── Init ────────────────────────────────────────────────
+        loadStatus();
+        // Light polling to keep status fresh
+        setInterval(loadStatus, 30000); // Every 30s
+    </script>
+</body>
+</html>

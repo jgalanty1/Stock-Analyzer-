@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEC Scraper Dashboard</title>
+    <style>
+        :root { --bg:#1a1a2e; --card:#16213e; --input:#0f3460; --accent:#e94560; --green:#00d9a5; --yellow:#ffc107; --text:#fff; --muted:#a0a0a0; --orange:#ff8c42; }
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+        .topbar { background:var(--card); padding:12px 30px; display:flex; align-items:center; justify-content:space-between; border-bottom:2px solid var(--accent); }
+        .topbar h1 { font-size:1.4rem; background:linear-gradient(90deg,var(--accent),var(--green)); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+        .topbar a { color:var(--muted); text-decoration:none; padding:6px 14px; border-radius:6px; background:var(--input); font-size:0.9rem; }
+        .topbar a:hover { color:var(--text); }
+        .container { max-width:1400px; margin:0 auto; padding:20px; }
+        .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
+        .grid-5 { display:grid; grid-template-columns:repeat(5,1fr); gap:15px; margin-bottom:20px; }
+        @media(max-width:1100px) { .grid-5 { grid-template-columns:repeat(3,1fr); } }
+        @media(max-width:900px) { .grid-2,.grid-5 { grid-template-columns:1fr; } }
+        .card { background:var(--card); border-radius:12px; padding:20px; }
+        .card h2 { font-size:1.1rem; margin-bottom:15px; padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.1); }
+        .stat-card { text-align:center; }
+        .stat-card .val { font-size:2.2rem; font-weight:700; }
+        .stat-card .label { font-size:0.85rem; color:var(--muted); margin-top:4px; }
+        .stat-card .val.critical { color:var(--accent); }
+        .stat-card .val.high { color:var(--orange); }
+        .stat-card .val.moderate { color:var(--yellow); }
+        .stat-card .val.low { color:var(--green); }
+        input[type="text"],input[type="password"],input[type="number"],select { width:100%; padding:10px 12px; border:none; border-radius:6px; background:var(--input); color:var(--text); font-size:0.95rem; margin-bottom:10px; }
+        .btn { padding:10px 20px; border:none; border-radius:8px; font-size:0.95rem; font-weight:600; cursor:pointer; transition:0.2s; }
+        .btn-primary { background:linear-gradient(90deg,var(--accent),#ff6b6b); color:#fff; }
+        .btn-primary:hover { transform:translateY(-1px); box-shadow:0 4px 15px rgba(233,69,96,0.3); }
+        .btn-primary:disabled { opacity:0.5; cursor:not-allowed; transform:none; }
+        .btn-sm { padding:6px 12px; font-size:0.8rem; border-radius:6px; }
+        .btn-green { background:var(--green); color:#000; }
+        .btn-orange { background:var(--orange); color:#000; }
+        .btn-outline { background:transparent; border:1px solid var(--muted); color:var(--muted); }
+        .btn-outline:hover { border-color:var(--text); color:var(--text); }
+        .progress-bar { width:100%; height:8px; background:var(--input); border-radius:4px; overflow:hidden; margin:10px 0; }
+        .progress-fill { height:100%; background:linear-gradient(90deg,var(--accent),var(--green)); transition:width 0.3s; border-radius:4px; }
+        .status-text { font-size:0.9rem; color:var(--muted); }
+        .status-running { color:var(--yellow); }
+        .status-complete { color:var(--green); }
+        .status-error { color:var(--accent); }
+        .table-wrap { overflow-x:auto; max-height:500px; overflow-y:auto; }
+        table { width:100%; border-collapse:collapse; font-size:0.85rem; }
+        th { background:var(--input); padding:10px 12px; text-align:left; position:sticky; top:0; z-index:1; }
+        td { padding:8px 12px; border-bottom:1px solid rgba(255,255,255,0.05); }
+        tr:hover td { background:rgba(255,255,255,0.03); }
+        .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.75rem; font-weight:600; }
+        .badge-green { background:rgba(0,217,165,0.2); color:var(--green); }
+        .badge-yellow { background:rgba(255,193,7,0.2); color:var(--yellow); }
+        .badge-red { background:rgba(233,69,96,0.2); color:var(--accent); }
+        .badge-orange { background:rgba(255,140,66,0.2); color:var(--orange); }
+        .badge-blue { background:rgba(15,52,96,0.5); color:#7eb8ff; }
+        .helper { font-size:0.8rem; color:var(--muted); }
+        .flex-between { display:flex; justify-content:space-between; align-items:center; }
+        .gap-8 { gap:8px; display:flex; }
+        .mb-10 { margin-bottom:10px; }
+        .score-bar { display:inline-flex; align-items:center; gap:6px; }
+        .score-bar-fill { width:60px; height:6px; background:var(--input); border-radius:3px; overflow:hidden; }
+        .score-bar-inner { height:100%; border-radius:3px; }
+        .score-num { font-weight:700; font-size:0.9rem; min-width:28px; }
+        .tabs { display:flex; gap:0; margin-bottom:20px; }
+        .tab { padding:12px 24px; background:var(--card); border:1px solid rgba(255,255,255,0.1); cursor:pointer; font-weight:600; font-size:0.95rem; color:var(--muted); transition:0.2s; }
+        .tab:first-child { border-radius:8px 0 0 8px; }
+        .tab:last-child { border-radius:0 8px 8px 0; }
+        .tab.active { background:var(--input); color:var(--text); border-color:var(--accent); }
+        .tab-content { display:none; }
+        .tab-content.active { display:block; }
+        .risk-dist { display:flex; height:24px; border-radius:6px; overflow:hidden; margin:10px 0; }
+        .risk-dist div { display:flex; align-items:center; justify-content:center; font-size:0.7rem; font-weight:700; min-width:2px; }
+        .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.7); z-index:100; justify-content:center; align-items:flex-start; padding-top:60px; overflow-y:auto; }
+        .modal-overlay.active { display:flex; }
+        .modal { background:var(--card); border-radius:12px; padding:24px; max-width:900px; width:95%; max-height:80vh; overflow-y:auto; }
+        .modal h2 { margin-bottom:16px; }
+        .modal-close { float:right; background:none; border:none; color:var(--muted); font-size:1.5rem; cursor:pointer; }
+        .modal-close:hover { color:var(--text); }
+        .errors-list { max-height:200px; overflow-y:auto; background:var(--input); border-radius:6px; padding:10px; margin-top:10px; font-size:0.8rem; color:var(--accent); }
+        .errors-list div { padding:3px 0; border-bottom:1px solid rgba(255,255,255,0.05); }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>🔍 SEC Filing Scraper & Analyzer</h1>
+        <div class="gap-8">
+            <a href="/">← Manual Analyzer</a>
+            <a href="/scraper">Scraper Dashboard</a>
+        </div>
+    </div>
+    <div class="container">
+        <div class="grid-5" id="statsRow">
+            <div class="card stat-card"><div class="val" id="statCompanies">0</div><div class="label">Companies</div></div>
+            <div class="card stat-card"><div class="val" id="statFilings">0</div><div class="label">Filings Found</div></div>
+            <div class="card stat-card"><div class="val" id="statDownloaded">0</div><div class="label">Downloaded</div></div>
+            <div class="card stat-card"><div class="val" id="statAnalyzed">0</div><div class="label">Analyzed</div></div>
+            <div class="card stat-card"><div class="val" id="statAvgScore">—</div><div class="label">Avg Score</div></div>
+        </div>
+        <div class="tabs">
+            <div class="tab active" data-tab="pipeline" onclick="switchTab('pipeline')">🚀 Pipeline</div>
+            <div class="tab" data-tab="results" onclick="switchTab('results')">📊 Results & Rankings</div>
+            <div class="tab" data-tab="universe" onclick="switchTab('universe')">🏢 Universe</div>
+            <div class="tab" data-tab="filings" onclick="switchTab('filings')">📑 Filings Index</div>
+        </div>
+
+        <!-- PIPELINE TAB -->
+        <div class="tab-content active" id="tab-pipeline">
+            <div class="grid-2">
+                <div>
+                    <div class="card mb-10">
+                        <h2>🔑 FMP API Key (Required)</h2>
+                        <label class="helper">Requires Starter plan ($22/mo) — <a href="https://financialmodelingprep.com/register" target="_blank" style="color:var(--green);">Sign up here</a></label>
+                        <div style="display:flex;gap:8px;">
+                            <input type="password" id="fmpKeyInput" placeholder="FMP API key...">
+                            <button class="btn btn-sm btn-green" id="saveFmpBtn" style="white-space:nowrap;">Save</button>
+                        </div>
+                        <p class="helper" id="fmpKeyStatus">Hard market cap filter: $20M–$100M · NYSE · NASDAQ · AMEX · OTCQX · OTCQB</p>
+                        <p class="helper" style="margin-top:4px;color:var(--yellow);">Rate limit: 299 req/min (plan allows 300)</p>
+                    </div>
+                    <div class="card mb-10">
+                        <h2>🚀 Pipeline Controls</h2>
+                        <p class="helper mb-10">Scrape → Find Filings → Download → Analyze All</p>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button class="btn btn-primary" id="runAllBtn" onclick="runPipeline(['universe','find','download'])">▶ Scrape All</button>
+                            <button class="btn btn-orange btn-sm" id="batchAnalyzeBtn" onclick="runBatchAnalysis()">⚡ Batch Analyze</button>
+                            <button class="btn btn-green btn-sm" onclick="runFullPipeline()">🔄 Full Pipeline</button>
+                        </div>
+                        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                            <button class="btn btn-outline btn-sm" onclick="runPipeline(['universe'])">Step 1: Universe</button>
+                            <button class="btn btn-outline btn-sm" onclick="runPipeline(['find'])">Step 2: Find</button>
+                            <button class="btn btn-outline btn-sm" onclick="runPipeline(['download'])">Step 3: Download</button>
+                        </div>
+                        <div style="margin-top:12px;display:flex;gap:12px;">
+                            <div><label class="helper">Max companies</label><input type="number" id="maxCompanies" placeholder="All" style="width:120px;"></div>
+                            <div><label class="helper">Max filings to analyze</label><input type="number" id="maxFilings" placeholder="All" style="width:120px;"></div>
+                        </div>
+                        <div style="margin-top:8px;"><label style="font-size:0.85rem;cursor:pointer;"><input type="checkbox" id="reanalyzeCheck"> Re-analyze already analyzed filings</label></div>
+                    </div>
+                </div>
+                <div>
+                    <div class="card mb-10">
+                        <h2>📊 Scraper Progress</h2>
+                        <div class="flex-between mb-10"><span class="status-text" id="pipelineStep">Idle</span><span class="status-text" id="pipelinePercent"></span></div>
+                        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+                        <p class="status-text" id="pipelineMessage">Ready to run</p>
+                    </div>
+                    <div class="card mb-10">
+                        <h2>⚡ Batch Analysis Progress</h2>
+                        <div class="flex-between mb-10"><span class="status-text" id="batchStep">Idle</span><span class="status-text" id="batchPercent"></span></div>
+                        <div class="progress-bar"><div class="progress-fill" id="batchProgressFill" style="width:0%"></div></div>
+                        <p class="status-text" id="batchMessage">Ready</p>
+                        <div class="flex-between" style="margin-top:8px;"><span class="helper" id="batchCompleted"></span><span class="helper" id="batchErrors"></span></div>
+                        <div id="batchErrorsList" class="errors-list" style="display:none;"></div>
+                    </div>
+                    <div class="card">
+                        <h2>📈 Companies by Exchange</h2>
+                        <div id="exchangeBreakdown"><p class="helper">Run the pipeline to see breakdown</p></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- RESULTS TAB -->
+        <div class="tab-content" id="tab-results">
+            <div class="card mb-10">
+                <div class="flex-between" style="flex-wrap:wrap;gap:10px;">
+                    <h2 style="border:none;padding:0;margin:0;">📊 Risk Analysis Results</h2>
+                    <div class="gap-8" style="flex-wrap:wrap;">
+                        <select id="resultSort" onchange="loadResults()" style="width:180px;">
+                            <option value="score_asc">Score: Low → High (Riskiest)</option>
+                            <option value="score_desc">Score: High → Low (Safest)</option>
+                            <option value="red_flags">Most Red Flags</option>
+                            <option value="ticker">By Ticker</option>
+                            <option value="date">By Filing Date</option>
+                        </select>
+                        <select id="resultRisk" onchange="loadResults()" style="width:140px;">
+                            <option value="">All Risk Levels</option>
+                            <option value="CRITICAL RISK">Critical</option>
+                            <option value="HIGH RISK">High</option>
+                            <option value="ELEVATED RISK">Elevated</option>
+                            <option value="MODERATE RISK">Moderate</option>
+                            <option value="LOW RISK">Low</option>
+                        </select>
+                        <select id="resultExchange" onchange="loadResults()" style="width:120px;">
+                            <option value="">All Exchanges</option>
+                            <option value="NYSE">NYSE</option><option value="NASDAQ">NASDAQ</option><option value="AMEX">AMEX</option>
+                            <option value="OTCQX">OTCQX</option><option value="OTCQB">OTCQB</option>
+                        </select>
+                        <select id="resultFormType" onchange="loadResults()" style="width:100px;">
+                            <option value="">All Types</option>
+                            <option value="10-K">10-K</option><option value="10-Q">10-Q</option>
+                        </select>
+                    </div>
+                </div>
+                <div style="margin:10px 0;">
+                    <div class="risk-dist" id="riskDistBar"></div>
+                    <div class="flex-between"><span class="helper" id="riskDistLabels"></span><span class="helper" id="resultTotal">0 results</span></div>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>#</th><th>Ticker</th><th>Company</th><th>Type</th><th>Date</th><th>Exchange</th><th style="width:120px;">Score</th><th>Risk</th><th>🔴</th><th>🟡</th><th>🟢</th><th>Trend</th><th>Key Concerns</th><th></th></tr></thead>
+                        <tbody id="resultsBody"><tr><td colspan="14" class="helper">No results yet — run batch analysis first</td></tr></tbody>
+                    </table>
+                </div>
+                <div class="flex-between" style="margin-top:10px;">
+                    <span class="helper" id="resultsPageInfo"></span>
+                    <div class="gap-8"><button class="btn btn-sm btn-outline" onclick="changeResultPage(-1)">← Prev</button><button class="btn btn-sm btn-outline" onclick="changeResultPage(1)">Next →</button></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- UNIVERSE TAB -->
+        <div class="tab-content" id="tab-universe">
+            <div class="card">
+                <div class="flex-between"><h2>🏢 Company Universe</h2>
+                    <select id="exchangeFilter" onchange="loadUniverse()" style="width:140px;">
+                        <option value="">All Exchanges</option><option value="NYSE">NYSE</option><option value="NASDAQ">NASDAQ</option>
+                        <option value="AMEX">AMEX</option><option value="OTCQX">OTCQX</option><option value="OTCQB">OTCQB</option><option value="OTC">OTC</option>
+                    </select>
+                </div>
+                <div class="table-wrap">
+                    <table><thead><tr><th>Ticker</th><th>Company</th><th>Exchange</th><th>Market Cap</th><th>Sector</th></tr></thead>
+                    <tbody id="universeBody"><tr><td colspan="5" class="helper">No data yet</td></tr></tbody></table>
+                </div>
+                <div class="flex-between" style="margin-top:10px;"><span class="helper" id="universeCount">0 companies</span>
+                    <div class="gap-8"><button class="btn btn-sm btn-outline" onclick="changeUnivPage(-1)">← Prev</button><button class="btn btn-sm btn-outline" onclick="changeUnivPage(1)">Next →</button></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FILINGS TAB -->
+        <div class="tab-content" id="tab-filings">
+            <div class="card">
+                <div class="flex-between"><h2>📑 Filings Index</h2>
+                    <div class="gap-8">
+                        <select id="filingStatusFilter" onchange="loadFilings()" style="width:160px;">
+                            <option value="">All</option><option value="downloaded">Downloaded</option><option value="pending">Pending</option><option value="analyzed">Analyzed</option>
+                        </select>
+                        <select id="formTypeFilter" onchange="loadFilings()" style="width:100px;">
+                            <option value="">All</option><option value="10-K">10-K</option><option value="10-Q">10-Q</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table><thead><tr><th>Ticker</th><th>Type</th><th>Date</th><th>Exchange</th><th>Status</th><th>Score</th><th>Action</th></tr></thead>
+                    <tbody id="filingsBody"><tr><td colspan="7" class="helper">No filings yet</td></tr></tbody></table>
+                </div>
+                <div class="flex-between" style="margin-top:10px;"><span class="helper" id="filingsCount">0 filings</span>
+                    <div class="gap-8"><button class="btn btn-sm btn-outline" onclick="changeFilPage(-1)">← Prev</button><button class="btn btn-sm btn-outline" onclick="changeFilPage(1)">Next →</button></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+        <div class="modal">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <h2 id="modalTitle">Filing Detail</h2>
+            <div id="modalContent"></div>
+        </div>
+    </div>
+
+<script>
+let univPage=1,filPage=1,resultPage=1,pollInterval=null,batchPollInterval=null;
+
+function switchTab(t){document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));document.querySelectorAll('.tab-content').forEach(e=>e.classList.remove('active'));document.querySelector('.tab[data-tab="'+t+'"]').classList.add('active');document.getElementById('tab-'+t).classList.add('active');if(t==='results')loadResults();if(t==='universe')loadUniverse();if(t==='filings')loadFilings();}
+
+document.getElementById('saveFmpBtn').addEventListener('click',async()=>{const k=document.getElementById('fmpKeyInput').value.trim();if(!k)return;const r=await fetch('/api/scraper/set-fmp-key',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_key:k})});const d=await r.json();const s=document.getElementById('fmpKeyStatus');if(d.success){s.textContent='✅ Key saved';s.style.color='#00d9a5';document.getElementById('fmpKeyInput').value='';}else{s.textContent='❌ Failed';s.style.color='#e94560';}});
+
+async function runPipeline(steps){const mc=document.getElementById('maxCompanies').value;const body={steps};if(mc)body.max_companies=parseInt(mc);const r=await fetch('/api/scraper/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(d.error){alert(d.error);return;}startScraperPoll();}
+
+async function runFullPipeline(){const mc=document.getElementById('maxCompanies').value;const body={steps:['universe','find','download']};if(mc)body.max_companies=parseInt(mc);const r=await fetch('/api/scraper/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(d.error){alert(d.error);return;}startScraperPoll(true);}
+
+function startScraperPoll(aa=false){if(!pollInterval)pollInterval=setInterval(()=>refreshScraperStatus(aa),1500);}
+
+async function refreshScraperStatus(aa=false){try{const r=await fetch('/api/scraper/status');const d=await r.json();document.getElementById('statCompanies').textContent=d.total_companies;document.getElementById('statFilings').textContent=d.total_filings;document.getElementById('statDownloaded').textContent=d.filings_downloaded;document.getElementById('statAnalyzed').textContent=d.filings_analyzed;const ps=d.pipeline_status;const se=document.getElementById('pipelineStep');se.textContent=ps.step||'Idle';se.className='status-text'+(ps.running?' status-running':ps.error?' status-error':ps.step==='Complete'?' status-complete':'');const pct=ps.total>0?Math.round(ps.progress/ps.total*100):0;document.getElementById('pipelinePercent').textContent=ps.running?pct+'%':'';document.getElementById('progressFill').style.width=pct+'%';document.getElementById('pipelineMessage').textContent=ps.message||'Ready';document.getElementById('runAllBtn').disabled=ps.running;document.getElementById('batchAnalyzeBtn').disabled=ps.running;const eb=d.companies_by_exchange||{};document.getElementById('exchangeBreakdown').innerHTML=Object.entries(eb).map(([ex,cnt])=>'<div class="flex-between" style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);"><span>'+ex+'</span><span style="font-weight:700;">'+cnt+'</span></div>').join('')||'<p class="helper">No data</p>';if(!ps.running&&pollInterval){clearInterval(pollInterval);pollInterval=null;loadUniverse();loadFilings();if(aa)setTimeout(()=>runBatchAnalysis(),500);}}catch(e){console.error(e);}}
+
+async function runBatchAnalysis(){const mf=document.getElementById('maxFilings').value;const ra=document.getElementById('reanalyzeCheck').checked;const body={use_llm:false,reanalyze:ra};if(mf)body.max_filings=parseInt(mf);const r=await fetch('/api/scraper/batch-analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(d.error){alert(d.error);return;}startBatchPoll();}
+
+function startBatchPoll(){if(!batchPollInterval)batchPollInterval=setInterval(refreshBatchStatus,1000);}
+
+async function refreshBatchStatus(){try{const r=await fetch('/api/scraper/batch-status');const d=await r.json();const se=document.getElementById('batchStep');se.textContent=d.running?'Analyzing...':(d.completed>0?'Complete':'Idle');se.className='status-text'+(d.running?' status-running':d.completed>0?' status-complete':'');const pct=d.total>0?Math.round(d.progress/d.total*100):0;document.getElementById('batchPercent').textContent=d.running?d.progress+'/'+d.total+' ('+pct+'%)':'';document.getElementById('batchProgressFill').style.width=pct+'%';document.getElementById('batchMessage').textContent=d.message||'Ready';document.getElementById('batchCompleted').textContent=d.completed>0?'✅ '+d.completed+' analyzed':'';document.getElementById('batchErrors').textContent=d.skipped>0?'⚠ '+d.skipped+' skipped':'';document.getElementById('batchAnalyzeBtn').disabled=d.running;const el=document.getElementById('batchErrorsList');if(d.errors&&d.errors.length>0){el.style.display='block';el.innerHTML=d.errors.slice(-20).map(e=>'<div>'+e+'</div>').join('');}else{el.style.display='none';}if(!d.running&&batchPollInterval){clearInterval(batchPollInterval);batchPollInterval=null;refreshScraperStatus();loadResults();loadFilings();}}catch(e){console.error(e);}}
+
+async function loadResults(){const sort=document.getElementById('resultSort').value;const risk=document.getElementById('resultRisk').value;const exchange=document.getElementById('resultExchange').value;const ft=document.getElementById('resultFormType').value;const p=new URLSearchParams({sort,risk,exchange,form_type:ft,page:resultPage,per_page:50});const r=await fetch('/api/scraper/results?'+p);const d=await r.json();document.getElementById('resultTotal').textContent=d.total+' results';document.getElementById('resultsPageInfo').textContent='Page '+d.page+' · '+d.total+' total';if(d.summary&&d.summary.avg_score){const a=d.summary.avg_score;const el=document.getElementById('statAvgScore');el.textContent=a;el.className='val '+scoreClass(a);}renderRiskDist(d.summary?d.summary.risk_distribution:{});const tb=document.getElementById('resultsBody');if(!d.results||!d.results.length){tb.innerHTML='<tr><td colspan="14" class="helper">No results yet</td></tr>';return;}tb.innerHTML=d.results.map((r,i)=>{const rank=(d.page-1)*d.per_page+i+1;const s=r.score!=null?r.score:50;const c=scoreColor(s);const rb=riskBadge(r.risk_rating);const ti=r.sentiment_trajectory==='improving'?'📈':r.sentiment_trajectory==='worsening'?'📉':'➡️';const cn=(r.key_concerns||[]).slice(0,2).join(', ');const db=r.result_file?'<button class="btn btn-sm btn-outline" onclick="showDetail(\''+r.result_file+'\')">View</button>':'';return '<tr><td>'+rank+'</td><td><strong>'+esc(r.ticker)+'</strong></td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+esc(r.company_name)+'</td><td>'+esc(r.form_type)+'</td><td>'+esc(r.filing_date)+'</td><td><span class="badge badge-blue">'+esc(r.exchange)+'</span></td><td><div class="score-bar"><span class="score-num" style="color:'+c+'">'+s+'</span><div class="score-bar-fill"><div class="score-bar-inner" style="width:'+s+'%;background:'+c+'"></div></div></div></td><td>'+rb+'</td><td style="color:var(--accent);font-weight:700;">'+(r.red_flags||0)+'</td><td style="color:var(--yellow);font-weight:700;">'+(r.yellow_flags||0)+'</td><td style="color:var(--green);font-weight:700;">'+(r.green_flags||0)+'</td><td>'+ti+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:0.8rem;color:var(--muted);">'+esc(cn)+'</td><td>'+db+'</td></tr>';}).join('');}
+function changeResultPage(d){resultPage=Math.max(1,resultPage+d);loadResults();}
+
+function esc(s){return(s||'').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function scoreColor(s){return s>=70?'#00d9a5':s>=55?'#ffc107':s>=40?'#ff8c42':s>=25?'#e94560':'#ff2244';}
+function scoreClass(s){return s>=70?'low':s>=40?'moderate':s>=25?'high':'critical';}
+function riskBadge(r){const m={'CRITICAL RISK':'badge-red','HIGH RISK':'badge-orange','ELEVATED RISK':'badge-yellow','MODERATE RISK':'badge-yellow','LOW RISK':'badge-green'};return '<span class="badge '+(m[r]||'badge-blue')+'">'+esc(r||'N/A')+'</span>';}
+function renderRiskDist(dist){if(!dist)dist={};const order=['CRITICAL RISK','HIGH RISK','ELEVATED RISK','MODERATE RISK','LOW RISK'];const colors={'CRITICAL RISK':'#ff2244','HIGH RISK':'#e94560','ELEVATED RISK':'#ff8c42','MODERATE RISK':'#ffc107','LOW RISK':'#00d9a5'};const total=Object.values(dist).reduce((a,b)=>a+b,0)||1;document.getElementById('riskDistBar').innerHTML=order.map(r=>{const cnt=dist[r]||0;const pct=cnt/total*100;return pct<1?'':'<div style="width:'+pct+'%;background:'+colors[r]+'">'+cnt+'</div>';}).join('');document.getElementById('riskDistLabels').innerHTML=order.filter(r=>dist[r]).map(r=>'<span style="color:'+colors[r]+';margin-right:12px;">'+r.replace(' RISK','')+': '+dist[r]+'</span>').join('');}
+
+async function showDetail(fn){const r=await fetch('/api/scraper/result/'+encodeURIComponent(fn));const d=await r.json();if(d.error){alert(d.error);return;}document.getElementById('modalTitle').textContent=d.ticker+' — '+d.risk_rating+' ('+d.final_score+'/100)';let h='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;"><div><strong>Company:</strong> '+esc(d.company_name)+'</div><div><strong>Mode:</strong> <span class="badge badge-blue">'+d.analysis_mode+'</span></div><div><strong>Score:</strong> <span style="font-size:1.4rem;font-weight:700;color:'+scoreColor(d.final_score)+'">'+d.final_score+'/100</span></div><div><strong>Sentiment:</strong> '+esc(d.sentiment_trajectory)+'</div></div>';if(d.key_concerns&&d.key_concerns.length){h+='<h3 style="margin:12px 0 8px;color:var(--accent);">Key Concerns</h3>';d.key_concerns.forEach(c=>{h+='<div style="padding:4px 0;">⚠️ '+esc(c)+'</div>';});}if(d.key_positives&&d.key_positives.length){h+='<h3 style="margin:12px 0 8px;color:var(--green);">Positives</h3>';d.key_positives.forEach(p=>{h+='<div style="padding:4px 0;">✅ '+esc(p)+'</div>';});}if(d.flags&&d.flags.length){h+='<h3 style="margin:16px 0 8px;">All Flags ('+d.flags.length+')</h3><div style="max-height:300px;overflow-y:auto;"><table style="font-size:0.8rem;"><thead><tr><th>Flag</th><th>Type</th><th>Risk</th><th>Category</th><th>Impact</th></tr></thead><tbody>';d.flags.forEach(f=>{const tc=f.signal_type==='red_flag'?'var(--accent)':f.signal_type==='yellow_flag'?'var(--yellow)':'var(--green)';h+='<tr><td>'+esc(f.title)+'</td><td style="color:'+tc+'">'+esc(f.signal_type)+'</td><td>'+esc(f.risk_level)+'</td><td>'+esc(f.category)+'</td><td>'+(f.score_impact>0?'+':'')+f.score_impact.toFixed(1)+'</td></tr>';});h+='</tbody></table></div>';}document.getElementById('modalContent').innerHTML=h;document.getElementById('detailModal').classList.add('active');}
+function closeModal(){document.getElementById('detailModal').classList.remove('active');}
+document.getElementById('detailModal').addEventListener('click',e=>{if(e.target.classList.contains('modal-overlay'))closeModal();});
+
+async function loadUniverse(){const ex=document.getElementById('exchangeFilter').value;const r=await fetch('/api/scraper/universe?page='+univPage+'&per_page=50&exchange='+ex);const d=await r.json();document.getElementById('universeCount').textContent=d.total+' companies';const tb=document.getElementById('universeBody');if(!d.companies.length){tb.innerHTML='<tr><td colspan="5" class="helper">No companies</td></tr>';return;}tb.innerHTML=d.companies.map(c=>'<tr><td><strong>'+esc(c.ticker)+'</strong></td><td>'+esc(c.company_name)+'</td><td><span class="badge badge-blue">'+esc(c.exchange)+'</span></td><td>'+(c.market_cap?'$'+(c.market_cap/1e6).toFixed(1)+'M':'N/A')+'</td><td>'+esc(c.sector)+'</td></tr>').join('');}
+function changeUnivPage(d){univPage=Math.max(1,univPage+d);loadUniverse();}
+
+async function loadFilings(){const st=document.getElementById('filingStatusFilter').value;const ft=document.getElementById('formTypeFilter').value;const r=await fetch('/api/scraper/filings?page='+filPage+'&per_page=50&status='+st+'&form_type='+ft);const d=await r.json();document.getElementById('filingsCount').textContent=d.total+' filings';const tb=document.getElementById('filingsBody');if(!d.filings.length){tb.innerHTML='<tr><td colspan="7" class="helper">No filings</td></tr>';return;}tb.innerHTML=d.filings.map(f=>{let sb='<span class="badge badge-yellow">Pending</span>';if(f.analyzed)sb='<span class="badge badge-green">Analyzed</span>';else if(f.downloaded)sb='<span class="badge badge-blue">Downloaded</span>';let sc=f.score!=null?'<span style="font-weight:700;color:'+scoreColor(f.score)+'">'+f.score+'</span>':'';let ab='';if(f.downloaded&&!f.analyzed)ab='<button class="btn btn-sm btn-green" onclick="analyzeOne(\''+f.accession_number+'\')">Analyze</button>';else if(f.result_file)ab='<button class="btn btn-sm btn-outline" onclick="showDetail(\''+f.result_file+'\')">View</button>';return '<tr><td><strong>'+esc(f.ticker)+'</strong></td><td>'+esc(f.form_type)+'</td><td>'+esc(f.filing_date)+'</td><td>'+esc(f.exchange)+'</td><td>'+sb+'</td><td>'+sc+'</td><td>'+ab+'</td></tr>';}).join('');}
+function changeFilPage(d){filPage=Math.max(1,filPage+d);loadFilings();}
+
+async function analyzeOne(acc){const r=await fetch('/api/scraper/analyze-filing',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({accession_number:acc,use_llm:false})});const d=await r.json();if(d.error){alert(d.error);return;}alert('Score: '+d.final_score+'/100 — '+d.risk_rating);loadFilings();}
+
+refreshScraperStatus();refreshBatchStatus();loadUniverse();loadFilings();
+</script>
+</body>
+</html>

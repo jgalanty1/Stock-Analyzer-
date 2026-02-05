@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEC Filing Analyzer - Microcap Scoring System</title>
+    <style>
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --bg-input: #0f3460;
+            --accent: #e94560;
+            --accent-green: #00d9a5;
+            --accent-yellow: #ffc107;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+        }
+        
+        .main-grid {
+            display: grid;
+            grid-template-columns: 400px 1fr;
+            gap: 30px;
+        }
+        
+        @media (max-width: 1000px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        
+        .card {
+            background: var(--bg-card);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+        }
+        
+        .card h2 {
+            font-size: 1.3rem;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--accent);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+        
+        input[type="text"],
+        input[type="file"] {
+            width: 100%;
+            padding: 12px 15px;
+            border: none;
+            border-radius: 8px;
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-size: 1rem;
+        }
+        
+        input[type="file"] {
+            padding: 10px;
+        }
+        
+        input::placeholder {
+            color: var(--text-secondary);
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(90deg, var(--accent), #ff6b6b);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(233, 69, 96, 0.4);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .btn-secondary {
+            background: var(--bg-input);
+            color: var(--text-primary);
+            margin-top: 10px;
+        }
+        
+        /* Results Section */
+        #results {
+            display: none;
+        }
+        
+        .score-display {
+            text-align: center;
+            padding: 30px;
+            background: linear-gradient(135deg, var(--bg-input), var(--bg-card));
+            border-radius: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .score-number {
+            font-size: 5rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+        
+        .score-label {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            margin-top: 10px;
+        }
+        
+        .risk-badge {
+            display: inline-block;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-top: 15px;
+        }
+        
+        .risk-critical { background: #dc3545; }
+        .risk-high { background: #fd7e14; }
+        .risk-elevated { background: #ffc107; color: #000; }
+        .risk-moderate { background: #20c997; }
+        .risk-low { background: #28a745; }
+        
+        .sentiment-badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 15px;
+            font-size: 0.9rem;
+            margin-top: 10px;
+        }
+        
+        .sentiment-improving { background: var(--accent-green); color: #000; }
+        .sentiment-worsening { background: var(--accent); }
+        .sentiment-stable { background: var(--bg-input); }
+        
+        /* Flags Section */
+        .flags-container {
+            display: grid;
+            gap: 15px;
+        }
+        
+        .flag-item {
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 4px solid;
+        }
+        
+        .flag-red { 
+            background: rgba(220, 53, 69, 0.15); 
+            border-color: #dc3545;
+        }
+        
+        .flag-yellow { 
+            background: rgba(255, 193, 7, 0.15); 
+            border-color: #ffc107;
+        }
+        
+        .flag-green { 
+            background: rgba(40, 167, 69, 0.15); 
+            border-color: #28a745;
+        }
+        
+        .flag-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .flag-title {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+        
+        .flag-impact {
+            font-weight: 700;
+            padding: 3px 10px;
+            border-radius: 10px;
+            font-size: 0.85rem;
+        }
+        
+        .impact-negative { background: rgba(220, 53, 69, 0.3); }
+        .impact-positive { background: rgba(40, 167, 69, 0.3); }
+        
+        .flag-meta {
+            display: flex;
+            gap: 15px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+        
+        .flag-description {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+        
+        .flag-evidence {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 5px;
+            font-size: 0.85rem;
+            font-style: italic;
+        }
+        
+        .change-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .change-new { background: #6f42c1; }
+        .change-worsening { background: #dc3545; }
+        .change-improving { background: #28a745; }
+        .change-unchanged { background: #6c757d; }
+        
+        /* Summary Lists */
+        .summary-list {
+            list-style: none;
+        }
+        
+        .summary-list li {
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .summary-list li:last-child {
+            border-bottom: none;
+        }
+        
+        .icon-concern { color: var(--accent); }
+        .icon-positive { color: var(--accent-green); }
+        
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .stat-box {
+            text-align: center;
+            padding: 15px;
+            background: var(--bg-input);
+            border-radius: 10px;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+        
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+        
+        /* Loading */
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 40px;
+        }
+        
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid var(--bg-input);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            background: var(--bg-input);
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .tab.active {
+            background: var(--accent);
+            color: white;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* Sentiment Section */
+        .sentiment-item {
+            padding: 15px;
+            background: var(--bg-input);
+            border-radius: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .sentiment-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        
+        .sentiment-category {
+            font-weight: 600;
+            text-transform: capitalize;
+        }
+        
+        .sentiment-level {
+            padding: 3px 10px;
+            border-radius: 10px;
+            font-size: 0.85rem;
+        }
+        
+        .level-very_confident, .level-confident { background: rgba(40, 167, 69, 0.3); }
+        .level-neutral { background: rgba(108, 117, 125, 0.3); }
+        .level-cautious { background: rgba(255, 193, 7, 0.3); }
+        .level-defensive { background: rgba(253, 126, 20, 0.3); }
+        .level-alarming { background: rgba(220, 53, 69, 0.3); }
+        
+        .key-phrases {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+            margin-top: 10px;
+        }
+        
+        .phrase-tag {
+            padding: 3px 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            font-size: 0.8rem;
+        }
+        
+        /* Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 48px;
+            height: 26px;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: #555;
+            border-radius: 26px;
+            transition: 0.3s;
+        }
+        .toggle-slider:before {
+            content: "";
+            position: absolute;
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background: white;
+            border-radius: 50%;
+            transition: 0.3s;
+        }
+        .toggle-switch input:checked + .toggle-slider {
+            background: var(--accent-green);
+        }
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(22px);
+        }
+
+        /* Helper text */
+        .helper-text {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📊 SEC Filing Analyzer</h1>
+            <p class="subtitle">Microcap & OTC Stock Scoring System with Change Detection & Sentiment Analysis</p>
+            <a href="/scraper" style="display:inline-block;margin-top:10px;padding:8px 18px;background:var(--bg-input);color:var(--accent-green);border-radius:8px;text-decoration:none;font-weight:600;">🔍 Auto-Scraper →</a>
+            <a href="/monitor" style="display:inline-block;margin-top:10px;margin-left:8px;padding:8px 18px;background:var(--bg-input);color:var(--accent-yellow);border-radius:8px;text-decoration:none;font-weight:600;">📡 Daily Monitor →</a>
+        </header>
+        
+        <div class="main-grid">
+            <!-- Upload Form -->
+            <div class="upload-section">
+                <div class="card">
+                    <h2>📁 Upload Filings</h2>
+                    <form id="uploadForm">
+                        <div class="form-group">
+                            <label for="ticker">Ticker Symbol</label>
+                            <input type="text" id="ticker" name="ticker" placeholder="e.g., RGS" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="company_name">Company Name</label>
+                            <input type="text" id="company_name" name="company_name" placeholder="e.g., Regis Corporation">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="current_filing">Current Filing (Required)</label>
+                            <input type="file" id="current_filing" name="current_filing" accept=".pdf,.txt,.html,.htm" required>
+                            <p class="helper-text">Upload 10-K, 10-Q, or 8-K (PDF, TXT, or HTML)</p>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="prior_filing">Prior Filing (Optional - for change detection)</label>
+                            <input type="file" id="prior_filing" name="prior_filing" accept=".pdf,.txt,.html,.htm">
+                            <p class="helper-text">Upload prior period filing to enable change tracking</p>
+                        </div>
+                        
+                        <!-- LLM Mode Toggle -->
+                        <div class="form-group" style="background: var(--bg-input); padding: 15px; border-radius: 10px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                                <label for="use_llm" style="margin: 0; color: var(--text-primary); font-weight: 600;">🤖 LLM Analysis (Claude API)</label>
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="use_llm" name="use_llm">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                            <p class="helper-text" style="margin-top: 0;">Deep sentiment analysis across 5 categories, nuanced flag detection, tone shift tracking. Requires API key.</p>
+                            <div id="apiKeySection" style="display: none; margin-top: 12px;">
+                                <div style="display: flex; gap: 8px;">
+                                    <input type="password" id="apiKeyInput" placeholder="sk-ant-..." style="flex: 1; padding: 8px 12px; border: none; border-radius: 6px; background: var(--bg-dark); color: var(--text-primary); font-size: 0.9rem;">
+                                    <button type="button" id="saveKeyBtn" style="padding: 8px 16px; border: none; border-radius: 6px; background: var(--accent-green); color: #000; font-weight: 600; cursor: pointer; white-space: nowrap;">Save Key</button>
+                                </div>
+                                <p class="helper-text" id="keyStatus" style="margin-top: 6px;">Enter your Anthropic API key</p>
+                            </div>
+                        </div>
+                        
+                        <button type="submit" class="btn btn-primary" id="analyzeBtn">
+                            🔍 Analyze Filing
+                        </button>
+                    </form>
+                </div>
+                
+                <div class="card">
+                    <h2>ℹ️ How It Works</h2>
+                    <ul class="summary-list">
+                        <li>📄 Upload SEC filings (10-K, 10-Q, 8-K)</li>
+                        <li>🔍 System scans for 20+ flag patterns</li>
+                        <li>📈 Detects changes from prior filings</li>
+                        <li>💬 Analyzes management sentiment/tone</li>
+                        <li>📊 Generates risk score (0-100)</li>
+                    </ul>
+                    <div style="margin-top: 15px; padding: 12px; background: var(--bg-input); border-radius: 8px;">
+                        <p style="font-weight: 600; margin-bottom: 6px;">Regex vs LLM Mode</p>
+                        <p class="helper-text" style="margin: 0;"><strong>Regex (default):</strong> Fast pattern matching, no API key needed. 1 sentiment category.</p>
+                        <p class="helper-text" style="margin: 4px 0 0 0;"><strong>LLM (Claude):</strong> Deep qualitative analysis, 5 sentiment categories, detects word substitutions, blame shifts, hedging language. Requires Anthropic API key.</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Results Section -->
+            <div class="results-section">
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p id="loadingText">Analyzing filing... This may take a moment.</p>
+                </div>
+                
+                <div id="results">
+                    <!-- Analysis Mode Badge -->
+                    <div id="modeBadge" style="text-align: center; margin-bottom: 10px;">
+                        <span id="modeIndicator" style="display: inline-block; padding: 4px 14px; border-radius: 12px; font-size: 0.8rem; font-weight: 600;"></span>
+                    </div>
+                    
+                    <!-- Score Display -->
+                    <div class="card score-display">
+                        <div class="score-number" id="scoreNumber">--</div>
+                        <div class="score-label">Risk Score (0-100)</div>
+                        <div class="risk-badge" id="riskBadge">--</div>
+                        <br>
+                        <div class="sentiment-badge" id="sentimentBadge">Sentiment: --</div>
+                    </div>
+                    
+                    <!-- LLM Assessment (shown when LLM mode) -->
+                    <div class="card" id="llmAssessmentCard" style="display: none; border-left: 4px solid var(--accent-green);">
+                        <h2>🤖 LLM Assessment</h2>
+                        <p id="llmAssessmentText" style="line-height: 1.6;"></p>
+                        <div id="llmSignificantShift" style="margin-top: 10px; padding: 10px; background: var(--bg-input); border-radius: 8px; display: none;">
+                            <strong>Most Significant Shift:</strong> <span id="shiftText"></span>
+                        </div>
+                        <div id="llmWordSubs" style="margin-top: 10px; display: none;">
+                            <strong>Word Substitutions Detected:</strong>
+                            <div id="wordSubsList" class="key-phrases" style="margin-top: 6px;"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Stats -->
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-value" id="redCount" style="color: #dc3545;">0</div>
+                            <div class="stat-label">🔴 Red Flags</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="yellowCount" style="color: #ffc107;">0</div>
+                            <div class="stat-label">🟡 Yellow Flags</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="greenCount" style="color: #28a745;">0</div>
+                            <div class="stat-label">🟢 Green Flags</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Tabs -->
+                    <div class="tabs">
+                        <button class="tab active" data-tab="flags">Flags</button>
+                        <button class="tab" data-tab="sentiment">Sentiment</button>
+                        <button class="tab" data-tab="summary">Summary</button>
+                    </div>
+                    
+                    <!-- Flags Tab -->
+                    <div class="tab-content active" id="tab-flags">
+                        <div class="card">
+                            <h2>🚩 Detected Flags</h2>
+                            <div class="flags-container" id="flagsContainer">
+                                <!-- Flags populated by JS -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Sentiment Tab -->
+                    <div class="tab-content" id="tab-sentiment">
+                        <div class="card">
+                            <h2>💬 Sentiment Analysis</h2>
+                            <div id="sentimentContainer">
+                                <!-- Sentiment populated by JS -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Summary Tab -->
+                    <div class="tab-content" id="tab-summary">
+                        <div class="card">
+                            <h2>⚠️ Key Concerns</h2>
+                            <ul class="summary-list" id="concernsList">
+                                <!-- Populated by JS -->
+                            </ul>
+                        </div>
+                        
+                        <div class="card">
+                            <h2>✅ Key Positives</h2>
+                            <ul class="summary-list" id="positivesList">
+                                <!-- Populated by JS -->
+                            </ul>
+                        </div>
+                        
+                        <div class="card">
+                            <h2>📊 Change Summary</h2>
+                            <div id="changeSummary">
+                                <!-- Populated by JS -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Download Button -->
+                    <button class="btn btn-secondary" id="downloadBtn">
+                        📥 Download Full Report (JSON)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // ============================================================
+        // LLM Toggle & API Key Management
+        // ============================================================
+        const llmToggle = document.getElementById('use_llm');
+        const apiKeySection = document.getElementById('apiKeySection');
+        const saveKeyBtn = document.getElementById('saveKeyBtn');
+        const keyStatus = document.getElementById('keyStatus');
+
+        // Check initial LLM status
+        fetch('/api/status').then(r => r.json()).then(data => {
+            if (data.llm_available) {
+                keyStatus.textContent = '✅ API key configured';
+                keyStatus.style.color = '#00d9a5';
+            } else if (!data.has_sdk) {
+                keyStatus.textContent = '⚠️ anthropic package not installed (run: pip install anthropic)';
+                keyStatus.style.color = '#ffc107';
+            }
+        }).catch(() => {});
+
+        llmToggle.addEventListener('change', () => {
+            apiKeySection.style.display = llmToggle.checked ? 'block' : 'none';
+        });
+
+        saveKeyBtn.addEventListener('click', async () => {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            if (!key) return;
+            try {
+                const res = await fetch('/api/set-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: key })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    keyStatus.textContent = '✅ API key saved for this session';
+                    keyStatus.style.color = '#00d9a5';
+                    document.getElementById('apiKeyInput').value = '';
+                } else {
+                    keyStatus.textContent = '❌ ' + (data.error || 'Failed to save key');
+                    keyStatus.style.color = '#dc3545';
+                }
+            } catch (e) {
+                keyStatus.textContent = '❌ Error saving key';
+                keyStatus.style.color = '#dc3545';
+            }
+        });
+
+        // ============================================================
+        // Tab functionality
+        // ============================================================
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+            });
+        });
+        
+        // ============================================================
+        // Form submission
+        // ============================================================
+        document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            // Add LLM toggle value
+            formData.set('use_llm', llmToggle.checked ? 'true' : 'false');
+
+            const loading = document.getElementById('loading');
+            const loadingText = document.getElementById('loadingText');
+            const results = document.getElementById('results');
+            const analyzeBtn = document.getElementById('analyzeBtn');
+            
+            loading.style.display = 'block';
+            results.style.display = 'none';
+            analyzeBtn.disabled = true;
+
+            if (llmToggle.checked) {
+                analyzeBtn.textContent = '⏳ Running LLM Analysis...';
+                loadingText.textContent = 'Running deep LLM analysis across sentiment, flags, and change detection... This may take 30-60 seconds.';
+            } else {
+                analyzeBtn.textContent = '⏳ Analyzing...';
+                loadingText.textContent = 'Analyzing filing... This may take a moment.';
+            }
+            
+            try {
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('Error: ' + data.error);
+                    return;
+                }
+                
+                displayResults(data);
+                
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                loading.style.display = 'none';
+                analyzeBtn.disabled = false;
+                analyzeBtn.textContent = '🔍 Analyze Filing';
+            }
+        });
+        
+        // ============================================================
+        // Display Results
+        // ============================================================
+        function displayResults(data) {
+            const results = document.getElementById('results');
+            results.style.display = 'block';
+            
+            // Analysis mode badge
+            const modeIndicator = document.getElementById('modeIndicator');
+            if (data.analysis_mode === 'llm') {
+                modeIndicator.textContent = '🤖 LLM Analysis (Claude API)';
+                modeIndicator.style.background = 'rgba(0, 217, 165, 0.2)';
+                modeIndicator.style.color = '#00d9a5';
+            } else {
+                modeIndicator.textContent = '⚡ Regex Analysis';
+                modeIndicator.style.background = 'rgba(108, 117, 125, 0.2)';
+                modeIndicator.style.color = '#a0a0a0';
+            }
+
+            // Score
+            document.getElementById('scoreNumber').textContent = data.final_score;
+            document.getElementById('scoreNumber').style.color = getScoreColor(data.final_score);
+            
+            // Risk badge
+            const riskBadge = document.getElementById('riskBadge');
+            riskBadge.textContent = data.risk_rating;
+            riskBadge.className = 'risk-badge ' + getRiskClass(data.risk_rating);
+            
+            // Sentiment badge
+            const sentimentBadge = document.getElementById('sentimentBadge');
+            sentimentBadge.textContent = 'Sentiment: ' + data.sentiment_trajectory.toUpperCase();
+            sentimentBadge.className = 'sentiment-badge sentiment-' + data.sentiment_trajectory;
+            
+            // LLM Assessment Card
+            const assessmentCard = document.getElementById('llmAssessmentCard');
+            if (data.llm_assessment) {
+                assessmentCard.style.display = 'block';
+                document.getElementById('llmAssessmentText').textContent = data.llm_assessment;
+
+                const meta = data.sentiment_meta || {};
+                const shiftDiv = document.getElementById('llmSignificantShift');
+                if (meta.most_significant_shift) {
+                    shiftDiv.style.display = 'block';
+                    document.getElementById('shiftText').textContent = meta.most_significant_shift;
+                } else {
+                    shiftDiv.style.display = 'none';
+                }
+
+                const subsDiv = document.getElementById('llmWordSubs');
+                const subsList = document.getElementById('wordSubsList');
+                if (meta.word_substitutions && meta.word_substitutions.length > 0) {
+                    subsDiv.style.display = 'block';
+                    subsList.innerHTML = meta.word_substitutions
+                        .map(w => `<span class="phrase-tag">${w}</span>`).join('');
+                } else {
+                    subsDiv.style.display = 'none';
+                }
+            } else {
+                assessmentCard.style.display = 'none';
+            }
+
+            // Stats
+            document.getElementById('redCount').textContent = data.score_breakdown.red_flag_count;
+            document.getElementById('yellowCount').textContent = data.score_breakdown.yellow_flag_count;
+            document.getElementById('greenCount').textContent = data.score_breakdown.green_flag_count;
+            
+            // Flags
+            const flagsContainer = document.getElementById('flagsContainer');
+            flagsContainer.innerHTML = '';
+            
+            data.flags.forEach(flag => {
+                const flagClass = flag.signal_type === 'red_flag' ? 'flag-red' : 
+                                  flag.signal_type === 'yellow_flag' ? 'flag-yellow' : 'flag-green';
+                const impactClass = flag.score_impact < 0 ? 'impact-negative' : 'impact-positive';
+                const changeClass = 'change-' + flag.change_type;
+                const sourceTag = flag.source === 'llm' ? '<span style="background:rgba(0,217,165,0.2);color:#00d9a5;padding:2px 6px;border-radius:6px;font-size:0.7rem;margin-left:6px;">LLM</span>' : '';
+                
+                flagsContainer.innerHTML += `
+                    <div class="flag-item ${flagClass}">
+                        <div class="flag-header">
+                            <span class="flag-title">${flag.title}${sourceTag}</span>
+                            <span class="flag-impact ${impactClass}">${flag.score_impact > 0 ? '+' : ''}${flag.score_impact} pts</span>
+                        </div>
+                        <div class="flag-meta">
+                            <span>📁 ${flag.category}</span>
+                            <span>⚠️ ${flag.risk_level}</span>
+                            <span class="change-badge ${changeClass}">${flag.change_type.toUpperCase()}</span>
+                        </div>
+                        <div class="flag-description">${flag.description}</div>
+                        ${flag.evidence ? `<div class="flag-evidence">"${flag.evidence}"</div>` : ''}
+                    </div>
+                `;
+            });
+            
+            // Sentiment
+            const sentimentContainer = document.getElementById('sentimentContainer');
+            sentimentContainer.innerHTML = '';
+            
+            data.sentiment_analysis.forEach(s => {
+                const levelClass = 'level-' + s.current_level.toLowerCase();
+                const changeIcon = s.change_direction === 'improving' ? '📈' : 
+                                   s.change_direction === 'worsening' ? '📉' : '➡️';
+                
+                // Build extra detail sections for LLM results
+                let reasoningHtml = '';
+                if (s.reasoning) {
+                    reasoningHtml = `<div style="margin-top:8px;font-size:0.85rem;color:var(--text-secondary);line-height:1.5;">${s.reasoning}</div>`;
+                }
+
+                let shiftsHtml = '';
+                if (s.key_shifts && s.key_shifts.length > 0) {
+                    shiftsHtml = `<div style="margin-top:8px;"><strong style="font-size:0.8rem;">Key Shifts:</strong><div class="key-phrases" style="margin-top:4px;">${s.key_shifts.map(sh => `<span class="phrase-tag" style="background:rgba(233,69,96,0.2);">⚡ ${sh}</span>`).join('')}</div></div>`;
+                }
+
+                sentimentContainer.innerHTML += `
+                    <div class="sentiment-item">
+                        <div class="sentiment-header">
+                            <span class="sentiment-category">${s.category.replace(/_/g, ' ')}</span>
+                            <span class="sentiment-level ${levelClass}">${s.current_level}</span>
+                        </div>
+                        <div>
+                            ${changeIcon} ${s.change_direction.toUpperCase()}
+                            ${s.prior_level ? ` (was: ${s.prior_level})` : ''}
+                            <span style="float: right;">${s.score_impact > 0 ? '+' : ''}${s.score_impact} pts</span>
+                        </div>
+                        ${reasoningHtml}
+                        ${s.key_phrases && s.key_phrases.length > 0 ? `
+                            <div class="key-phrases" style="margin-top:8px;">
+                                ${s.key_phrases.map(p => `<span class="phrase-tag">"${p}"</span>`).join('')}
+                            </div>
+                        ` : ''}
+                        ${shiftsHtml}
+                    </div>
+                `;
+            });
+            
+            // Key Concerns
+            const concernsList = document.getElementById('concernsList');
+            concernsList.innerHTML = '';
+            data.key_concerns.forEach(c => {
+                concernsList.innerHTML += `<li><span class="icon-concern">⚠️</span> ${c}</li>`;
+            });
+            if (data.key_concerns.length === 0) {
+                concernsList.innerHTML = '<li>No major concerns identified</li>';
+            }
+            
+            // Key Positives
+            const positivesList = document.getElementById('positivesList');
+            positivesList.innerHTML = '';
+            data.key_positives.forEach(p => {
+                positivesList.innerHTML += `<li><span class="icon-positive">✅</span> ${p}</li>`;
+            });
+            if (data.key_positives.length === 0) {
+                positivesList.innerHTML = '<li>No major positives identified</li>';
+            }
+            
+            // Change Summary
+            const changeSummary = document.getElementById('changeSummary');
+            const cs = data.change_summary;
+            changeSummary.innerHTML = `
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <div class="stat-value" style="color: #6f42c1;">${cs.new}</div>
+                        <div class="stat-label">🆕 New</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" style="color: #dc3545;">${cs.worsening}</div>
+                        <div class="stat-label">📉 Worsening</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-value" style="color: #28a745;">${cs.improving}</div>
+                        <div class="stat-label">📈 Improving</div>
+                    </div>
+                </div>
+            `;
+            
+            // Download button
+            document.getElementById('downloadBtn').onclick = () => {
+                if (data.result_file) {
+                    window.location.href = '/download/' + data.result_file;
+                }
+            };
+        }
+        
+        function getScoreColor(score) {
+            if (score >= 70) return '#28a745';
+            if (score >= 55) return '#20c997';
+            if (score >= 40) return '#ffc107';
+            if (score >= 25) return '#fd7e14';
+            return '#dc3545';
+        }
+        
+        function getRiskClass(rating) {
+            const map = {
+                'LOW RISK': 'risk-low',
+                'MODERATE RISK': 'risk-moderate',
+                'ELEVATED RISK': 'risk-elevated',
+                'HIGH RISK': 'risk-high',
+                'CRITICAL RISK': 'risk-critical'
+            };
+            return map[rating] || 'risk-moderate';
+        }
+    </script>
+</body>
+</html>

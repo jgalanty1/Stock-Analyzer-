@@ -1,0 +1,1823 @@
+"""
+SEC Filing Analyzer - Web Application
+=====================================
+A web-based tool for analyzing microcap and OTC stock SEC filings
+using the Microcap Scoring and Flagging System.
+
+Supports two analysis modes:
+  - Regex (default): Fast pattern matching, no API key needed
+  - LLM (Claude API): Deep qualitative analysis with sentiment across
+    5 categories, nuanced flag detection, and change tracking
+
+Upload 10-K, 10-Q, and 8-K filings to get:
+- Risk scores (0-100)
+- Change-focused flag detection
+- Sentiment analysis (5 categories in LLM mode)
+- Investment thesis
+
+Run with: python app.py
+Then open: http://localhost:5000
+"""
+
+import os
+import json
+import re
+import logging
+from datetime import datetime
+from flask import Flask, render_template, request, jsonify, send_file
+from werkzeug.utils import secure_filename
+import pdfplumber
+from analyzer import SECFilingAnalyzer
+
+logger = logging.getLogger(__name__)
+
+# Initialize Flask app
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['RESULTS_FOLDER'] = 'results'
+
+# Ensure folders exist
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
+
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {'pdf', 'txt', 'html', 'htm'}
+
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def extract_text_from_pdf(filepath):
+    """Extract text from PDF file"""
+    text = ""
+    try:
+        with pdfplumber.open(filepath) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n\n"
+    except Exception as e:
+        print(f"Error extracting PDF: {e}")
+        return None
+    return text
+
+
+def extract_text_from_file(filepath):
+    """Extract text from various file formats"""
+    ext = filepath.rsplit('.', 1)[1].lower()
+    
+    if ext == 'pdf':
+        return extract_text_from_pdf(filepath)
+    elif ext in ['txt', 'html', 'htm']:
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+            return f.read()
+    return None
+
+
+@app.route('/')
+def index():
+    """Main page"""
+    return render_template('index.html')
+
+
+@app.route('/api/status')
+def api_status():
+    """Check if LLM analysis is available"""
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    has_key = bool(api_key)
+    has_sdk = False
+    try:
+        import anthropic
+        has_sdk = True
+    except ImportError:
+        pass
+    return jsonify({
+        'llm_available': has_key and has_sdk,
+        'has_api_key': has_key,
+        'has_sdk': has_sdk,
+    })
+
+
+@app.route('/api/set-key', methods=['POST'])
+def set_api_key():
+    """Set the Anthropic API key at runtime (stored in env only, not persisted)"""
+    data = request.get_json()
+    key = data.get('api_key', '').strip()
+    if not key:
+        return jsonify({'error': 'No API key provided'}), 400
+    os.environ['ANTHROPIC_API_KEY'] = key
+    return jsonify({'success': True})
+
+
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    """Analyze uploaded SEC filings"""
+    
+    # Get form data
+    ticker = request.form.get('ticker', 'UNKNOWN').upper()
+    company_name = request.form.get('company_name', 'Unknown Company')
+    use_llm = request.form.get('use_llm', 'false').lower() == 'true'
+    
+    # Check for files
+    if 'current_filing' not in request.files:
+        return jsonify({'error': 'No current filing uploaded'}), 400
+    
+    current_file = request.files['current_filing']
+    prior_file = request.files.get('prior_filing')
+    
+    if current_file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    
+    if not allowed_file(current_file.filename):
+        return jsonify({'error': 'Invalid file type. Allowed: PDF, TXT, HTML'}), 400
+    
+    # Save and extract current filing
+    current_filename = secure_filename(f"{ticker}_current_{current_file.filename}")
+    current_path = os.path.join(app.config['UPLOAD_FOLDER'], current_filename)
+    current_file.save(current_path)
+    
+    current_text = extract_text_from_file(current_path)
+    if not current_text:
+        return jsonify({'error': 'Could not extract text from current filing'}), 400
+    
+    # Save and extract prior filing if provided
+    prior_text = None
+    if prior_file and prior_file.filename != '':
+        if allowed_file(prior_file.filename):
+            prior_filename = secure_filename(f"{ticker}_prior_{prior_file.filename}")
+            prior_path = os.path.join(app.config['UPLOAD_FOLDER'], prior_filename)
+            prior_file.save(prior_path)
+            prior_text = extract_text_from_file(prior_path)
+    
+    # Run analysis
+    analyzer = SECFilingAnalyzer(use_llm=use_llm)
+    
+    try:
+        results = analyzer.analyze_filing(
+            ticker=ticker,
+            company_name=company_name,
+            current_text=current_text,
+            prior_text=prior_text
+        )
+    except Exception as e:
+        return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
+    
+    # Save results
+    result_filename = f"{ticker}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    result_path = os.path.join(app.config['RESULTS_FOLDER'], result_filename)
+    with open(result_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    # Add result filename for download
+    results['result_file'] = result_filename
+    
+    return jsonify(results)
+
+
+@app.route('/download/<filename>')
+def download(filename):
+    """Download analysis results"""
+    filepath = os.path.join(app.config['RESULTS_FOLDER'], secure_filename(filename))
+    if os.path.exists(filepath):
+        return send_file(filepath, as_attachment=True)
+    return jsonify({'error': 'File not found'}), 404
+
+
+@app.route('/api/analyze-text', methods=['POST'])
+def analyze_text():
+    """API endpoint for analyzing raw text (for programmatic use)"""
+    data = request.get_json()
+    
+    if not data or 'current_text' not in data:
+        return jsonify({'error': 'current_text required'}), 400
+    
+    use_llm = data.get('use_llm', False)
+    analyzer = SECFilingAnalyzer(use_llm=use_llm)
+    
+    try:
+        results = analyzer.analyze_filing(
+            ticker=data.get('ticker', 'UNKNOWN'),
+            company_name=data.get('company_name', 'Unknown Company'),
+            current_text=data['current_text'],
+            prior_text=data.get('prior_text')
+        )
+    except Exception as e:
+        return jsonify({'error': f'Analysis failed: {str(e)}'}), 500
+    
+    return jsonify(results)
+
+
+# =========================================================================
+# SCRAPER ROUTES
+# =========================================================================
+
+from scraper import SECScraper
+from monitor import MonitorState, DailyScheduler, run_daily_check
+import threading
+
+# Global scraper state
+_scraper = None
+_monitor_state = None
+_scheduler = None
+_scraper_status = {
+    "running": False,
+    "step": "",
+    "progress": 0,
+    "total": 0,
+    "current_ticker": "",
+    "message": "",
+    "error": None,
+}
+_scraper_lock = threading.Lock()
+_scraper_cancel = threading.Event()
+_batch_cancel = threading.Event()
+_llm_cancel = threading.Event()
+
+
+def _get_scraper():
+    global _scraper
+    if _scraper is None:
+        _scraper = SECScraper()
+    return _scraper
+
+
+def _get_monitor_state():
+    global _monitor_state
+    if _monitor_state is None:
+        _monitor_state = MonitorState()
+    return _monitor_state
+
+
+def _get_scheduler():
+    global _scheduler
+    if _scheduler is None:
+        _scheduler = DailyScheduler(_get_scraper(), _get_monitor_state())
+    return _scheduler
+
+
+@app.route('/scraper')
+def scraper_page():
+    """Scraper dashboard page"""
+    return render_template('scraper.html')
+
+
+@app.route('/api/scraper/status')
+def scraper_status():
+    """Get scraper status and stats"""
+    scraper = _get_scraper()
+    stats = scraper.get_stats()
+    stats["pipeline_status"] = _scraper_status.copy()
+    stats["fmp_key_set"] = bool(os.environ.get("FMP_API_KEY", ""))
+    return jsonify(stats)
+
+
+@app.route('/api/scraper/set-fmp-key', methods=['POST'])
+def set_fmp_key():
+    """Set the FMP API key"""
+    data = request.get_json()
+    key = data.get('api_key', '').strip()
+    if not key:
+        return jsonify({'error': 'No API key provided'}), 400
+    os.environ['FMP_API_KEY'] = key
+    return jsonify({'success': True})
+
+
+@app.route('/api/scraper/test-fmp', methods=['POST'])
+def test_fmp():
+    """Run FMP API diagnostics"""
+    from scraper import test_fmp_api
+    data = request.get_json() or {}
+    key = data.get('api_key', '').strip() or os.environ.get("FMP_API_KEY", "")
+    if not key:
+        return jsonify({'error': 'No API key provided. Enter your key first.'}), 400
+    results = test_fmp_api(key)
+    return jsonify(results)
+
+
+@app.route('/api/scraper/run', methods=['POST'])
+def run_scraper():
+    """Start the scraper pipeline in a background thread"""
+    global _scraper_status
+
+    with _scraper_lock:
+        if _scraper_status["running"]:
+            return jsonify({'error': 'Scraper is already running'}), 409
+
+    data = request.get_json() or {}
+    steps = data.get('steps', ['universe', 'find', 'download'])
+    max_companies = data.get('max_companies', None)
+    max_downloads = data.get('max_downloads', None)
+    min_market_cap = data.get('min_market_cap', None)
+    max_market_cap = data.get('max_market_cap', None)
+
+    def run_pipeline():
+        global _scraper_status
+        scraper = _get_scraper()
+        _scraper_cancel.clear()
+
+        try:
+            _scraper_status["running"] = True
+            _scraper_status["error"] = None
+
+            if 'universe' in steps:
+                _scraper_status["step"] = "Building company universe"
+                _scraper_status["progress"] = 0
+                _scraper_status["total"] = 0
+
+                if _scraper_cancel.is_set():
+                    raise InterruptedError("Cancelled before universe step")
+
+                def universe_progress(msg):
+                    _scraper_status["message"] = msg
+
+                fmp_key = os.environ.get("FMP_API_KEY", "")
+                if not fmp_key:
+                    raise RuntimeError(
+                        "FMP API key not set. Go to Settings and enter your "
+                        "FMP API key. Requires Starter plan ($22/mo) or higher. "
+                        "Sign up: https://financialmodelingprep.com/register"
+                    )
+
+                _scraper_status["message"] = (
+                    f"Querying FMP screener for "
+                    f"${int((min_market_cap or 20_000_000)/1_000_000)}-"
+                    f"${int((max_market_cap or 100_000_000)/1_000_000)}M US companies..."
+                )
+                count = scraper.step1_build_universe(
+                    fmp_api_key=fmp_key,
+                    progress_callback=universe_progress,
+                    min_market_cap=min_market_cap,
+                    max_market_cap=max_market_cap,
+                    cancel_event=_scraper_cancel,
+                )
+                _scraper_status["message"] = (
+                    f"Universe: {count} companies "
+                    f"(${int((min_market_cap or 20_000_000)/1_000_000)}-"
+                    f"${int((max_market_cap or 100_000_000)/1_000_000)}M market cap)"
+                )
+
+            if 'find' in steps:
+                if _scraper_cancel.is_set():
+                    raise InterruptedError("Cancelled before find step")
+
+                _scraper_status["step"] = "Finding filings on EDGAR"
+                _scraper_status["progress"] = 0
+
+                def find_progress(current, total, ticker, num_filings):
+                    _scraper_status["progress"] = current
+                    _scraper_status["total"] = total
+                    _scraper_status["current_ticker"] = ticker
+                    _scraper_status["message"] = (
+                        f"{current}/{total} companies — {ticker} ({num_filings} filings)"
+                    )
+
+                count = scraper.step2_find_filings(
+                    max_companies=max_companies,
+                    progress_callback=find_progress,
+                    cancel_event=_scraper_cancel,
+                )
+                _scraper_status["message"] = f"Found {count} filings total"
+
+            if 'download' in steps:
+                if _scraper_cancel.is_set():
+                    raise InterruptedError("Cancelled before download step")
+
+                _scraper_status["step"] = "Downloading filings"
+                _scraper_status["progress"] = 0
+
+                def dl_progress(current, total, ticker, success):
+                    _scraper_status["progress"] = current
+                    _scraper_status["total"] = total
+                    _scraper_status["current_ticker"] = ticker
+                    status = "✓" if success else "✗"
+                    _scraper_status["message"] = (
+                        f"{current}/{total} — {ticker} {status}"
+                    )
+
+                count = scraper.step3_download_filings(
+                    max_downloads=max_downloads,
+                    progress_callback=dl_progress,
+                    cancel_event=_scraper_cancel,
+                )
+                _scraper_status["message"] = f"Downloaded {count} filings"
+
+            _scraper_status["step"] = "Complete"
+            _scraper_status["message"] = "Pipeline finished successfully"
+
+        except InterruptedError as e:
+            _scraper_status["step"] = "Stopped"
+            _scraper_status["message"] = f"⏹ {str(e)}"
+            logger.info(f"Pipeline stopped by user: {e}")
+        except Exception as e:
+            _scraper_status["error"] = str(e)
+            _scraper_status["step"] = "Error"
+            _scraper_status["message"] = str(e)
+            logger.error(f"Pipeline error: {e}", exc_info=True)
+        finally:
+            _scraper_status["running"] = False
+
+    thread = threading.Thread(target=run_pipeline, daemon=True)
+    thread.start()
+
+    return jsonify({'success': True, 'message': 'Scraper pipeline started'})
+
+
+@app.route('/api/scraper/stop', methods=['POST'])
+def stop_scraper():
+    """Request scraper pipeline stop"""
+    global _scraper_status
+    _scraper_cancel.set()
+    _scraper_status["message"] = "⏹ Stop requested — halting after current operation..."
+    return jsonify({'success': True})
+
+
+@app.route('/api/scraper/universe')
+def get_universe():
+    """Get the company universe"""
+    scraper = _get_scraper()
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 50))
+    exchange = request.args.get('exchange', '')
+
+    companies = scraper.universe
+    if exchange:
+        companies = [c for c in companies if c.get('exchange') == exchange]
+
+    start = (page - 1) * per_page
+    end = start + per_page
+
+    return jsonify({
+        'total': len(companies),
+        'page': page,
+        'per_page': per_page,
+        'companies': companies[start:end],
+    })
+
+
+@app.route('/api/scraper/filings')
+def get_filings():
+    """Get the filings index with optional filters"""
+    scraper = _get_scraper()
+    status_filter = request.args.get('status', '')  # downloaded, pending, analyzed
+    form_type = request.args.get('form_type', '')
+    ticker = request.args.get('ticker', '')
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 50))
+
+    filings = scraper.filings_index
+
+    if status_filter == 'downloaded':
+        filings = [f for f in filings if f.get('downloaded') and not f.get('analyzed')]
+    elif status_filter == 'pending':
+        filings = [f for f in filings if not f.get('downloaded')]
+    elif status_filter == 'analyzed':
+        filings = [f for f in filings if f.get('analyzed')]
+
+    if form_type:
+        filings = [f for f in filings if f.get('form_type') == form_type]
+
+    if ticker:
+        filings = [f for f in filings if f.get('ticker', '').upper() == ticker.upper()]
+
+    start = (page - 1) * per_page
+    end = start + per_page
+
+    return jsonify({
+        'total': len(filings),
+        'page': page,
+        'per_page': per_page,
+        'filings': filings[start:end],
+    })
+
+
+@app.route('/api/scraper/analyze-filing', methods=['POST'])
+def analyze_scraped_filing():
+    """Analyze a specific scraped filing by accession number"""
+    data = request.get_json()
+    accession = data.get('accession_number', '')
+    use_llm = data.get('use_llm', False)
+
+    scraper = _get_scraper()
+    filing = None
+    for f in scraper.filings_index:
+        if f.get('accession_number') == accession:
+            filing = f
+            break
+
+    if not filing:
+        return jsonify({'error': 'Filing not found'}), 404
+
+    if not filing.get('downloaded') or not filing.get('local_path'):
+        return jsonify({'error': 'Filing not downloaded yet'}), 400
+
+    filepath = filing['local_path']
+    if not os.path.exists(filepath):
+        return jsonify({'error': f'File not found at {filepath}'}), 404
+
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        content = f.read()
+
+    if filepath.endswith('.html') or filepath.endswith('.htm'):
+        from scraper import extract_text_from_html
+        content = extract_text_from_html(content)
+
+    analyzer = SECFilingAnalyzer(use_llm=use_llm)
+    results = analyzer.analyze_filing(
+        ticker=filing.get('ticker', 'UNKNOWN'),
+        company_name=filing.get('company_name', 'Unknown'),
+        current_text=content,
+    )
+
+    result_filename = (
+        f"{filing.get('ticker', 'UNK')}_"
+        f"{filing.get('form_type', '').replace('/', '-')}_"
+        f"{filing.get('filing_date', '')}.json"
+    )
+    result_path = os.path.join(app.config['RESULTS_FOLDER'], result_filename)
+    with open(result_path, 'w') as rf:
+        json.dump(results, rf, indent=2)
+
+    scraper.mark_analyzed(accession, {
+        "final_score": results.get("final_score"),
+        "risk_rating": results.get("risk_rating"),
+        "red_flag_count": results.get("score_breakdown", {}).get("red_flag_count", 0),
+        "yellow_flag_count": results.get("score_breakdown", {}).get("yellow_flag_count", 0),
+        "green_flag_count": results.get("score_breakdown", {}).get("green_flag_count", 0),
+        "sentiment_trajectory": results.get("sentiment_trajectory"),
+        "key_concerns": results.get("key_concerns", []),
+        "result_file": result_filename,
+    })
+
+    results['result_file'] = result_filename
+    return jsonify(results)
+
+
+# =========================================================================
+# BATCH ANALYSIS
+# =========================================================================
+
+_batch_status = {
+    "running": False, "progress": 0, "total": 0,
+    "current_ticker": "", "message": "",
+    "errors": [], "completed": 0, "skipped": 0,
+}
+
+
+@app.route('/api/scraper/batch-analyze', methods=['POST'])
+def batch_analyze():
+    """Run analysis on all downloaded but unanalyzed filings"""
+    global _batch_status
+    if _batch_status["running"]:
+        return jsonify({'error': 'Batch analysis already running'}), 409
+
+    data = request.get_json() or {}
+    use_llm = data.get('use_llm', False)
+    max_filings = data.get('max_filings', None)
+    reanalyze = data.get('reanalyze', False)
+
+    def run_batch():
+        global _batch_status
+        scraper = _get_scraper()
+        _batch_cancel.clear()
+        try:
+            _batch_status = {
+                "running": True, "progress": 0, "total": 0,
+                "current_ticker": "", "message": "Starting batch analysis...",
+                "errors": [], "completed": 0, "skipped": 0,
+            }
+            if reanalyze:
+                pending = [f for f in scraper.filings_index if f.get('downloaded')]
+            else:
+                pending = [f for f in scraper.filings_index
+                           if f.get('downloaded') and not f.get('analyzed')]
+            if max_filings:
+                pending = pending[:int(max_filings)]
+
+            _batch_status["total"] = len(pending)
+            _batch_status["message"] = f"Analyzing {len(pending)} filings..."
+
+            analyzer = SECFilingAnalyzer(use_llm=use_llm)
+
+            for i, filing in enumerate(pending):
+                if _batch_cancel.is_set():
+                    _batch_status["message"] = (
+                        f"⏹ Stopped — {_batch_status['completed']} analyzed, "
+                        f"{_batch_status['skipped']} skipped"
+                    )
+                    return
+
+                ticker = filing.get('ticker', 'UNKNOWN')
+                form_type = filing.get('form_type', '')
+                _batch_status["progress"] = i + 1
+                _batch_status["current_ticker"] = ticker
+                _batch_status["message"] = f"{i+1}/{len(pending)} — {ticker} {form_type}"
+
+                filepath = filing.get('local_path', '')
+                if not filepath or not os.path.exists(filepath):
+                    _batch_status["skipped"] += 1
+                    _batch_status["errors"].append(f"{ticker}: File not found")
+                    continue
+
+                try:
+                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    if filepath.endswith('.html') or filepath.endswith('.htm'):
+                        from scraper import extract_text_from_html
+                        content = extract_text_from_html(content)
+                    if not content or len(content) < 200:
+                        _batch_status["skipped"] += 1
+                        _batch_status["errors"].append(f"{ticker}: Filing too short")
+                        continue
+
+                    results = analyzer.analyze_filing(
+                        ticker=ticker,
+                        company_name=filing.get('company_name', 'Unknown'),
+                        current_text=content,
+                    )
+
+                    result_filename = (
+                        f"{ticker}_{form_type.replace('/', '-')}_"
+                        f"{filing.get('filing_date', '')}.json"
+                    )
+                    result_path = os.path.join(app.config['RESULTS_FOLDER'], result_filename)
+                    with open(result_path, 'w') as rf:
+                        json.dump(results, rf, indent=2)
+
+                    scraper.mark_analyzed(filing.get('accession_number', ''), {
+                        "final_score": results.get("final_score"),
+                        "risk_rating": results.get("risk_rating"),
+                        "red_flag_count": results.get("score_breakdown", {}).get("red_flag_count", 0),
+                        "yellow_flag_count": results.get("score_breakdown", {}).get("yellow_flag_count", 0),
+                        "green_flag_count": results.get("score_breakdown", {}).get("green_flag_count", 0),
+                        "sentiment_trajectory": results.get("sentiment_trajectory"),
+                        "key_concerns": results.get("key_concerns", []),
+                        "result_file": result_filename,
+                    })
+                    _batch_status["completed"] += 1
+                except Exception as e:
+                    _batch_status["errors"].append(f"{ticker}: {str(e)}")
+                    _batch_status["skipped"] += 1
+
+            _batch_status["message"] = (
+                f"Complete — {_batch_status['completed']} analyzed, "
+                f"{_batch_status['skipped']} skipped"
+            )
+        except Exception as e:
+            _batch_status["message"] = f"Batch error: {str(e)}"
+            _batch_status["errors"].append(str(e))
+        finally:
+            _batch_status["running"] = False
+
+    thread = threading.Thread(target=run_batch, daemon=True)
+    thread.start()
+    return jsonify({'success': True, 'message': 'Batch analysis started'})
+
+
+@app.route('/api/scraper/batch-status')
+def batch_status():
+    """Get batch analysis progress"""
+    return jsonify(_batch_status)
+
+
+@app.route('/api/scraper/batch-stop', methods=['POST'])
+def batch_stop():
+    """Stop batch analysis"""
+    _batch_cancel.set()
+    return jsonify({'success': True})
+
+
+# =========================================================================
+# TICKER SEARCH & COMPANY HISTORY
+# =========================================================================
+
+@app.route('/api/scraper/search')
+def search_ticker():
+    """Search for a ticker and get all its filings with analysis history"""
+    query = request.args.get('q', '').strip().upper()
+    if not query:
+        return jsonify({'error': 'No search query provided'}), 400
+
+    scraper = _get_scraper()
+
+    # Find matching companies
+    matching_companies = [
+        c for c in scraper.universe
+        if query in c.get('ticker', '').upper() or
+           query in c.get('company_name', '').upper()
+    ]
+
+    # Find all filings for matching tickers
+    matching_tickers = {c['ticker'] for c in matching_companies}
+    matching_filings = [
+        f for f in scraper.filings_index
+        if f.get('ticker', '').upper() in matching_tickers or
+           query in f.get('ticker', '').upper()
+    ]
+
+    # Sort filings by date descending
+    matching_filings.sort(key=lambda x: x.get('filing_date', ''), reverse=True)
+
+    return jsonify({
+        'query': query,
+        'companies': matching_companies[:20],
+        'filings': matching_filings[:50],
+        'total_companies': len(matching_companies),
+        'total_filings': len(matching_filings),
+    })
+
+
+@app.route('/api/scraper/company/<ticker>')
+def get_company_history(ticker):
+    """Get full history for a specific company including sentiment trajectory"""
+    ticker = ticker.upper()
+    scraper = _get_scraper()
+
+    # Find company info
+    company = next((c for c in scraper.universe if c.get('ticker', '').upper() == ticker), None)
+
+    # Get all filings for this ticker
+    filings = [f for f in scraper.filings_index if f.get('ticker', '').upper() == ticker]
+    filings.sort(key=lambda x: x.get('filing_date', ''), reverse=True)
+
+    # Load full analysis results if available
+    for f in filings:
+        if f.get('result_file'):
+            result_path = os.path.join(app.config['RESULTS_FOLDER'], f['result_file'])
+            if os.path.exists(result_path):
+                try:
+                    with open(result_path) as rf:
+                        f['full_analysis'] = json.load(rf)
+                except Exception:
+                    pass
+
+    # Calculate trajectory if multiple analyzed filings
+    trajectory = None
+    analyzed = [f for f in filings if f.get('analyzed') and f.get('score') is not None]
+    if len(analyzed) >= 2:
+        scores = [(f['filing_date'], f['score']) for f in analyzed]
+        scores.sort(key=lambda x: x[0])
+        oldest_score = scores[0][1]
+        newest_score = scores[-1][1]
+        change = newest_score - oldest_score
+        if change >= 10:
+            trajectory = "strongly_improving"
+        elif change >= 3:
+            trajectory = "improving"
+        elif change <= -10:
+            trajectory = "deteriorating"
+        elif change <= -3:
+            trajectory = "declining"
+        else:
+            trajectory = "stable"
+
+    return jsonify({
+        'ticker': ticker,
+        'company': company,
+        'filings': filings,
+        'trajectory': trajectory,
+        'filing_count': len(filings),
+        'analyzed_count': len(analyzed),
+    })
+
+
+# =========================================================================
+# LLM TIERED ANALYSIS
+# =========================================================================
+
+_llm_analysis_status = {
+    "running": False,
+    "tier": 0,
+    "progress": 0,
+    "total": 0,
+    "current_ticker": "",
+    "message": "",
+    "errors": [],
+    "completed_tier1": 0,
+    "completed_tier2": 0,
+}
+
+
+@app.route('/api/llm/status')
+def llm_status():
+    """Get LLM API status and cost estimates"""
+    from llm_analysis import check_api_status, estimate_cost
+    scraper = _get_scraper()
+
+    # Count filings ready for analysis
+    ready = len([f for f in scraper.filings_index if f.get('downloaded')])
+
+    return jsonify({
+        'api_status': check_api_status(),
+        'filings_ready': ready,
+        'cost_estimate': estimate_cost(ready, 0.25),
+        'analysis_status': _llm_analysis_status.copy(),
+    })
+
+
+@app.route('/api/llm/set-keys', methods=['POST'])
+def set_llm_keys():
+    """Set OpenAI and/or Anthropic API keys"""
+    data = request.get_json() or {}
+    if 'openai_key' in data and data['openai_key'].strip():
+        os.environ['OPENAI_API_KEY'] = data['openai_key'].strip()
+    if 'anthropic_key' in data and data['anthropic_key'].strip():
+        os.environ['ANTHROPIC_API_KEY'] = data['anthropic_key'].strip()
+    return jsonify({'success': True})
+
+
+@app.route('/api/llm/run-tiered', methods=['POST'])
+def run_tiered_analysis():
+    """Run two-tier LLM analysis on all downloaded filings"""
+    global _llm_analysis_status
+
+    if _llm_analysis_status["running"]:
+        return jsonify({'error': 'Analysis already running'}), 409
+
+    data = request.get_json() or {}
+    tier2_pct = data.get('tier2_percentile', 0.25)
+    max_filings = data.get('max_filings', None)
+    reanalyze = data.get('reanalyze', False)
+
+    scraper = _get_scraper()
+
+    # Get filings to analyze
+    if reanalyze:
+        filings_to_analyze = [f for f in scraper.filings_index if f.get('downloaded')]
+    else:
+        filings_to_analyze = [
+            f for f in scraper.filings_index
+            if f.get('downloaded') and not f.get('llm_analyzed')
+        ]
+
+    if max_filings:
+        filings_to_analyze = filings_to_analyze[:int(max_filings)]
+
+    if not filings_to_analyze:
+        return jsonify({'error': 'No filings ready for analysis'}), 400
+
+    def run_analysis():
+        global _llm_analysis_status
+        from llm_analysis import analyze_filing_tier1, analyze_filing_tier2
+        from scraper import extract_text_from_html
+        _llm_cancel.clear()
+
+        try:
+            _llm_analysis_status = {
+                "running": True, "tier": 1, "progress": 0,
+                "total": len(filings_to_analyze), "current_ticker": "",
+                "message": "Starting Tier 1 analysis...", "errors": [],
+                "completed_tier1": 0, "completed_tier2": 0,
+                "failed_tier1": 0, "failed_tier2": 0,
+            }
+
+            # ---- PRE-FLIGHT: verify SDK + key before burning time ----
+            _llm_analysis_status["message"] = "Checking API keys and SDKs..."
+            preflight_errors = []
+            try:
+                from openai import OpenAI
+            except ImportError:
+                preflight_errors.append(
+                    "OpenAI SDK not installed. Run: pip install openai"
+                )
+            openai_key = os.environ.get("OPENAI_API_KEY", "")
+            if not openai_key:
+                preflight_errors.append(
+                    "OPENAI_API_KEY not set — enter your key in the LLM section"
+                )
+            try:
+                import anthropic as _anthr
+            except ImportError:
+                preflight_errors.append(
+                    "Anthropic SDK not installed. Run: pip install anthropic"
+                )
+            anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+            if not anthropic_key:
+                preflight_errors.append(
+                    "ANTHROPIC_API_KEY not set — needed for Tier 2"
+                )
+
+            if preflight_errors:
+                _llm_analysis_status["errors"] = preflight_errors
+                _llm_analysis_status["message"] = (
+                    f"❌ Pre-flight failed: {'; '.join(preflight_errors)}"
+                )
+                return
+
+            # Quick smoke test — make one small OpenAI call
+            try:
+                _llm_analysis_status["message"] = "Smoke-testing OpenAI API key..."
+                client = OpenAI(api_key=openai_key)
+                client.chat.completions.create(
+                    model="gpt-4o-mini", max_tokens=5,
+                    messages=[{"role": "user", "content": "Say OK"}],
+                )
+            except Exception as e:
+                _llm_analysis_status["errors"].append(f"OpenAI smoke test failed: {e}")
+                _llm_analysis_status["message"] = (
+                    f"❌ OpenAI API test failed: {e}"
+                )
+                return
+
+            tier1_results = []
+            total = len(filings_to_analyze)
+            _llm_analysis_status["message"] = f"Tier 1: analyzing {total} filings..."
+
+            # ---- TIER 1 ----
+            for i, filing in enumerate(filings_to_analyze):
+                if _llm_cancel.is_set():
+                    _llm_analysis_status["message"] = (
+                        f"⏹ Stopped during Tier 1 — {_llm_analysis_status['completed_tier1']} done, "
+                        f"{_llm_analysis_status['failed_tier1']} failed"
+                    )
+                    scraper._save_state()
+                    return
+
+                ticker = filing.get('ticker', 'UNKNOWN')
+                _llm_analysis_status["progress"] = i + 1
+                _llm_analysis_status["current_ticker"] = ticker
+                _llm_analysis_status["message"] = f"Tier 1: {i+1}/{total} - {ticker}"
+
+                # Load filing text
+                filepath = filing.get('local_path', '')
+                if not filepath or not os.path.exists(filepath):
+                    _llm_analysis_status["errors"].append(f"{ticker}: file not found")
+                    continue
+
+                try:
+                    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                    if filepath.endswith('.html') or filepath.endswith('.htm'):
+                        content = extract_text_from_html(content)
+
+                    result = analyze_filing_tier1(
+                        ticker=ticker,
+                        company_name=filing.get('company_name', ''),
+                        filing_text=content,
+                        form_type=filing.get('form_type', '10-K'),
+                    )
+
+                    if result:
+                        result['accession_number'] = filing.get('accession_number')
+                        result['filing_date'] = filing.get('filing_date')
+                        result['local_path'] = filepath
+                        result['company_name'] = filing.get('company_name', '')
+                        tier1_results.append(result)
+                        _llm_analysis_status["completed_tier1"] += 1
+
+                        # Save Tier 1 result
+                        result_filename = f"{ticker}_tier1_{filing.get('filing_date', '')}.json"
+                        result_path = os.path.join(app.config['RESULTS_FOLDER'], result_filename)
+                        with open(result_path, 'w') as rf:
+                            json.dump(result, rf, indent=2)
+
+                        # Update filing index
+                        filing['llm_analyzed'] = True
+                        filing['tier1_score'] = result.get('composite_score')
+                        filing['gem_potential'] = result.get('gem_potential')
+                        filing['tier1_result_file'] = result_filename
+                    else:
+                        _llm_analysis_status["failed_tier1"] += 1
+                        _llm_analysis_status["errors"].append(
+                            f"{ticker}: Tier 1 returned None (API error or JSON parse failure)"
+                        )
+
+                except Exception as e:
+                    _llm_analysis_status["failed_tier1"] += 1
+                    _llm_analysis_status["errors"].append(f"{ticker}: {str(e)}")
+                    logger.error(f"Tier 1 error for {ticker}: {e}")
+
+                # Update message with running tallies (even on error)
+                ok = _llm_analysis_status["completed_tier1"]
+                fail = _llm_analysis_status["failed_tier1"]
+                _llm_analysis_status["message"] = (
+                    f"Tier 1: {i+1}/{total} — {ticker} "
+                    f"(✅{ok} ❌{fail})"
+                )
+
+            scraper._save_state()
+
+            # ---- TIER 2 ----
+            if not tier1_results:
+                _llm_analysis_status["tier"] = 2
+                _llm_analysis_status["message"] = (
+                    f"⚠ Tier 1 produced 0 results from {total} filings "
+                    f"({_llm_analysis_status['failed_tier1']} failed). "
+                    f"Skipping Tier 2. Check errors below."
+                )
+            else:
+                from forensics import analyze_language, diff_filings, format_forensics_for_prompt
+
+                tier1_results.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
+                tier2_count = max(1, int(len(tier1_results) * tier2_pct))
+                tier2_candidates = tier1_results[:tier2_count]
+
+                _llm_analysis_status["tier"] = 2
+                _llm_analysis_status["total"] = len(tier2_candidates)
+                _llm_analysis_status["progress"] = 0
+                _llm_analysis_status["message"] = (
+                    f"Starting Tier 2 on top {len(tier2_candidates)} of "
+                    f"{len(tier1_results)} Tier 1 results..."
+                )
+
+                # Build lookup: ticker -> list of filings sorted by date desc
+                all_filings_by_ticker = {}
+                for f in scraper.filings_index:
+                    t = f.get('ticker', '')
+                    if t:
+                        if t not in all_filings_by_ticker:
+                            all_filings_by_ticker[t] = []
+                        all_filings_by_ticker[t].append(f)
+                for t in all_filings_by_ticker:
+                    all_filings_by_ticker[t].sort(
+                        key=lambda x: x.get('filing_date', ''), reverse=True
+                    )
+
+                # Build CIK lookup from universe for insider/XBRL queries
+                ticker_to_cik = {}
+                for c in scraper.universe:
+                    tk = c.get('ticker', '')
+                    ck = c.get('cik', '')
+                    if tk and ck:
+                        ticker_to_cik[tk] = ck
+
+                # EDGAR session for insider/XBRL fetches (reuse scraper pattern)
+                from scraper import _get_session, _edgar_limiter
+                from insider_tracker import (
+                    fetch_insider_transactions, fetch_institutional_filings,
+                    analyze_insider_activity, format_insider_for_prompt,
+                )
+                from inflection_detector import (
+                    fetch_xbrl_financials, extract_financial_metrics,
+                    detect_inflections, analyze_filing_timing,
+                    format_inflection_for_prompt,
+                )
+                edgar_session = _get_session()
+
+                # Cache insider + XBRL data per ticker (avoid re-fetching)
+                _insider_cache = {}
+                _xbrl_cache = {}
+
+                for i, t1_result in enumerate(tier2_candidates):
+                    if _llm_cancel.is_set():
+                        _llm_analysis_status["message"] = (
+                            f"⏹ Stopped during Tier 2 — T1: {_llm_analysis_status['completed_tier1']}, "
+                            f"T2: {_llm_analysis_status['completed_tier2']}"
+                        )
+                        scraper._save_state()
+                        return
+
+                    ticker = t1_result.get('ticker', 'UNKNOWN')
+                    _llm_analysis_status["progress"] = i + 1
+                    _llm_analysis_status["current_ticker"] = ticker
+                    _llm_analysis_status["message"] = (
+                        f"Tier 2: {i+1}/{len(tier2_candidates)} - {ticker} (data + forensics + LLM)"
+                    )
+
+                    filepath = t1_result.get('local_path', '')
+                    if not filepath or not os.path.exists(filepath):
+                        _llm_analysis_status["failed_tier2"] += 1
+                        _llm_analysis_status["errors"].append(f"{ticker} T2: file not found")
+                        continue
+
+                    try:
+                        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                        if filepath.endswith('.html') or filepath.endswith('.htm'):
+                            content = extract_text_from_html(content)
+
+                        # ---- Run forensic analysis on current filing ----
+                        current_forensics = analyze_language(content)
+
+                        # ---- Find prior filing for same ticker ----
+                        prior_text = None
+                        prior_filing_info = None
+                        diff_data = None
+                        current_acc = t1_result.get('accession_number', '')
+                        ticker_filings = all_filings_by_ticker.get(ticker, [])
+
+                        for pf in ticker_filings:
+                            pf_acc = pf.get('accession_number', '')
+                            pf_date = pf.get('filing_date', '')
+                            cur_date = t1_result.get('filing_date', '')
+                            # Must be different filing and earlier date
+                            if (pf_acc != current_acc and pf_date < cur_date
+                                    and pf.get('downloaded') and pf.get('local_path')
+                                    and os.path.exists(pf.get('local_path', ''))):
+                                prior_filing_info = pf
+                                break
+
+                        if prior_filing_info:
+                            try:
+                                pf_path = prior_filing_info['local_path']
+                                with open(pf_path, 'r', encoding='utf-8', errors='ignore') as pf:
+                                    prior_content = pf.read()
+                                if pf_path.endswith('.html') or pf_path.endswith('.htm'):
+                                    prior_content = extract_text_from_html(prior_content)
+
+                                diff_data = diff_filings(content, prior_content)
+                                logger.info(
+                                    f"{ticker}: diff vs prior {prior_filing_info.get('filing_date','')} — "
+                                    f"signal={diff_data.get('overall_signal','?')}"
+                                )
+                            except Exception as de:
+                                logger.warning(f"{ticker}: diff analysis failed: {de}")
+                        else:
+                            logger.info(f"{ticker}: no prior filing found for diff")
+
+                        # ---- Format forensics for LLM prompt ----
+                        forensic_prompt = format_forensics_for_prompt(
+                            current_forensics, diff_data
+                        )
+
+                        # ---- Fetch insider activity data ----
+                        insider_prompt = ""
+                        insider_result = None
+                        cik = ticker_to_cik.get(ticker, '')
+                        if cik:
+                            try:
+                                if ticker not in _insider_cache:
+                                    _llm_analysis_status["message"] = (
+                                        f"Tier 2: {i+1}/{len(tier2_candidates)} - "
+                                        f"{ticker} (fetching insider data...)"
+                                    )
+                                    txns = fetch_insider_transactions(
+                                        cik, edgar_session, _edgar_limiter
+                                    )
+                                    inst_filings = fetch_institutional_filings(
+                                        cik, edgar_session, _edgar_limiter
+                                    )
+                                    _insider_cache[ticker] = analyze_insider_activity(
+                                        txns, inst_filings
+                                    )
+                                insider_result = _insider_cache[ticker]
+                                insider_prompt = format_insider_for_prompt(insider_result)
+                                logger.info(
+                                    f"{ticker}: insider signal={insider_result.get('signal','?')}, "
+                                    f"score={insider_result.get('accumulation_score', 50)}"
+                                )
+                            except Exception as ie:
+                                logger.warning(f"{ticker}: insider tracking failed: {ie}")
+
+                        # ---- Fetch XBRL financial data ----
+                        inflection_prompt = ""
+                        inflection_result = None
+                        if cik:
+                            try:
+                                if ticker not in _xbrl_cache:
+                                    _llm_analysis_status["message"] = (
+                                        f"Tier 2: {i+1}/{len(tier2_candidates)} - "
+                                        f"{ticker} (fetching financial data...)"
+                                    )
+                                    xbrl_facts = fetch_xbrl_financials(
+                                        cik, edgar_session, _edgar_limiter
+                                    )
+                                    if xbrl_facts:
+                                        metrics = extract_financial_metrics(xbrl_facts)
+                                        _xbrl_cache[ticker] = detect_inflections(metrics)
+                                    else:
+                                        _xbrl_cache[ticker] = None
+                                inflection_result = _xbrl_cache[ticker]
+                                if inflection_result:
+                                    # Filing timing analysis
+                                    filing_timing = analyze_filing_timing(
+                                        t1_result.get('filing_date', ''),
+                                        t1_result.get('form_type', '10-K'),
+                                    )
+                                    inflection_prompt = format_inflection_for_prompt(
+                                        inflection_result, filing_timing
+                                    )
+                                    logger.info(
+                                        f"{ticker}: inflection signal={inflection_result.get('signal','?')}, "
+                                        f"score={inflection_result.get('inflection_score', 50)}, "
+                                        f"inflections={len(inflection_result.get('inflections', []))}"
+                                    )
+                            except Exception as xe:
+                                logger.warning(f"{ticker}: XBRL/inflection analysis failed: {xe}")
+
+                        # ---- Run Tier 2 LLM with all data ----
+                        _llm_analysis_status["message"] = (
+                            f"Tier 2: {i+1}/{len(tier2_candidates)} - {ticker} (LLM analysis...)"
+                        )
+
+                        t2_result = analyze_filing_tier2(
+                            ticker=ticker,
+                            company_name=t1_result.get('company_name', ''),
+                            filing_text=content,
+                            form_type=t1_result.get('form_type', '10-K'),
+                            forensic_data=forensic_prompt,
+                            insider_data=insider_prompt,
+                            inflection_data=inflection_prompt,
+                        )
+
+                        if t2_result:
+                            t2_result['tier1_score'] = t1_result.get('composite_score')
+                            t2_result['accession_number'] = t1_result.get('accession_number')
+                            t2_result['filing_date'] = t1_result.get('filing_date')
+
+                            # Attach forensic data to saved result
+                            t2_result['forensics'] = current_forensics
+                            if diff_data and 'error' not in diff_data:
+                                t2_result['filing_diff'] = {
+                                    'prior_filing_date': prior_filing_info.get('filing_date', ''),
+                                    'prior_form_type': prior_filing_info.get('form_type', ''),
+                                    'overall_signal': diff_data.get('overall_signal', ''),
+                                    'positive_shifts': diff_data.get('positive_shifts', 0),
+                                    'negative_shifts': diff_data.get('negative_shifts', 0),
+                                    'metric_changes': diff_data.get('metric_changes', {}),
+                                    'score_changes': diff_data.get('score_changes', {}),
+                                    'risk_factor_diff': diff_data.get('risk_factor_diff', {}),
+                                    'mda_changes': diff_data.get('mda_changes', {}),
+                                }
+
+                            # Attach insider data to saved result
+                            if insider_result:
+                                t2_result['insider_activity'] = {
+                                    'accumulation_score': insider_result.get('accumulation_score', 50),
+                                    'signal': insider_result.get('signal', 'no_data'),
+                                    'summary': insider_result.get('summary', ''),
+                                    'open_market_buys': insider_result.get('open_market_buys', 0),
+                                    'open_market_sells': insider_result.get('open_market_sells', 0),
+                                    'total_buy_value': insider_result.get('total_buy_value', 0),
+                                    'total_sell_value': insider_result.get('total_sell_value', 0),
+                                    'net_value': insider_result.get('net_value', 0),
+                                    'buy_sell_ratio': insider_result.get('buy_sell_ratio', 1),
+                                    'unique_buyers': insider_result.get('unique_buyers', 0),
+                                    'cluster_score': insider_result.get('cluster_score', 0),
+                                    'notable_transactions': insider_result.get('notable_transactions', []),
+                                    'has_activist_holder': insider_result.get('has_activist_holder', False),
+                                    'has_passive_large_holder': insider_result.get('has_passive_large_holder', False),
+                                    'institutional_filing_count': insider_result.get('institutional_filing_count', 0),
+                                }
+
+                            # Attach inflection data to saved result
+                            if inflection_result:
+                                t2_result['financial_inflections'] = {
+                                    'inflection_score': inflection_result.get('inflection_score', 50),
+                                    'signal': inflection_result.get('signal', 'neutral'),
+                                    'inflections': inflection_result.get('inflections', []),
+                                    'financial_summary': inflection_result.get('financial_summary', {}),
+                                    'positive_inflections': inflection_result.get('positive_inflections', 0),
+                                    'negative_inflections': inflection_result.get('negative_inflections', 0),
+                                }
+
+                            _llm_analysis_status["completed_tier2"] += 1
+
+                            # Save Tier 2 result
+                            result_filename = f"{ticker}_tier2_{t1_result.get('filing_date', '')}.json"
+                            result_path = os.path.join(app.config['RESULTS_FOLDER'], result_filename)
+                            with open(result_path, 'w') as rf:
+                                json.dump(t2_result, rf, indent=2)
+
+                            # Update filing index
+                            for f in scraper.filings_index:
+                                if f.get('accession_number') == t1_result.get('accession_number'):
+                                    f['tier2_analyzed'] = True
+                                    # Safely convert gem score to number
+                                    raw_score = t2_result.get('final_gem_score')
+                                    try:
+                                        f['final_gem_score'] = int(float(raw_score)) if raw_score is not None else None
+                                    except (ValueError, TypeError):
+                                        f['final_gem_score'] = None
+                                        logger.warning(f"{ticker}: final_gem_score not numeric: {raw_score}")
+                                    f['conviction'] = t2_result.get('conviction_level')
+                                    f['recommendation'] = t2_result.get('recommendation')
+                                    f['tier2_result_file'] = result_filename
+                                    f['has_prior_diff'] = diff_data is not None and 'error' not in (diff_data or {})
+                                    f['diff_signal'] = diff_data.get('overall_signal', '') if diff_data else ''
+                                    # Insider signals
+                                    f['insider_signal'] = insider_result.get('signal', '') if insider_result else ''
+                                    f['accumulation_score'] = insider_result.get('accumulation_score', 50) if insider_result else None
+                                    # Inflection signals
+                                    f['inflection_signal'] = inflection_result.get('signal', '') if inflection_result else ''
+                                    f['inflection_score'] = inflection_result.get('inflection_score', 50) if inflection_result else None
+                                    logger.info(
+                                        f"Tier 2 saved for {ticker}: score={f['final_gem_score']}, "
+                                        f"conviction={f['conviction']}, rec={f['recommendation']}, "
+                                        f"diff={f['diff_signal']}, insider={f['insider_signal']}, "
+                                        f"inflection={f['inflection_signal']}"
+                                    )
+                                    break
+                        else:
+                            _llm_analysis_status["failed_tier2"] += 1
+                            _llm_analysis_status["errors"].append(
+                                f"{ticker} T2: returned None (API error or JSON parse failure)"
+                            )
+
+                    except Exception as e:
+                        _llm_analysis_status["failed_tier2"] += 1
+                        _llm_analysis_status["errors"].append(f"{ticker} T2: {str(e)}")
+                        logger.error(f"Tier 2 error for {ticker}: {e}")
+
+            scraper._save_state()
+            _llm_analysis_status["message"] = (
+                f"Complete! Tier 1: {_llm_analysis_status['completed_tier1']} OK / "
+                f"{_llm_analysis_status['failed_tier1']} failed — "
+                f"Tier 2: {_llm_analysis_status['completed_tier2']} OK / "
+                f"{_llm_analysis_status['failed_tier2']} failed"
+            )
+
+        except Exception as e:
+            _llm_analysis_status["message"] = f"Error: {str(e)}"
+            _llm_analysis_status["errors"].append(str(e))
+            logger.error(f"Tiered analysis error: {e}", exc_info=True)
+        finally:
+            _llm_analysis_status["running"] = False
+
+    thread = threading.Thread(target=run_analysis, daemon=True)
+    thread.start()
+
+    return jsonify({
+        'success': True,
+        'message': f'Starting tiered analysis on {len(filings_to_analyze)} filings',
+        'tier2_count': int(len(filings_to_analyze) * tier2_pct),
+    })
+
+
+@app.route('/api/llm/stop', methods=['POST'])
+def stop_llm_analysis():
+    """Stop LLM tiered analysis"""
+    _llm_cancel.set()
+    return jsonify({'success': True})
+
+
+@app.route('/api/llm/test', methods=['POST'])
+def test_llm():
+    """Test LLM analysis on a single filing for debugging."""
+    from llm_analysis import analyze_filing_tier1, check_api_status
+    from scraper import extract_text_from_html
+
+    # Check APIs first
+    api_status = check_api_status()
+    issues = []
+    if not api_status['openai']['has_sdk']:
+        issues.append("OpenAI SDK not installed (pip install openai)")
+    if not api_status['openai']['has_key']:
+        issues.append("OPENAI_API_KEY not set")
+    if issues:
+        return jsonify({'error': '; '.join(issues), 'api_status': api_status}), 400
+
+    # Find first downloaded filing to test on
+    scraper = _get_scraper()
+    test_filing = None
+    for f in scraper.filings_index:
+        if f.get('downloaded') and f.get('local_path') and os.path.exists(f.get('local_path', '')):
+            test_filing = f
+            break
+
+    if not test_filing:
+        return jsonify({'error': 'No downloaded filings to test on. Run scraper first.'}), 400
+
+    ticker = test_filing.get('ticker', 'UNKNOWN')
+    filepath = test_filing['local_path']
+
+    try:
+        with open(filepath, 'r', encoding='utf-8', errors='ignore') as fh:
+            content = fh.read()
+        if filepath.endswith('.html') or filepath.endswith('.htm'):
+            content = extract_text_from_html(content)
+
+        content_len = len(content)
+        if content_len < 200:
+            return jsonify({
+                'error': f'Filing text too short ({content_len} chars). File may be empty.',
+                'ticker': ticker, 'filepath': filepath,
+            }), 400
+
+        result = analyze_filing_tier1(
+            ticker=ticker,
+            company_name=test_filing.get('company_name', ''),
+            filing_text=content,
+            form_type=test_filing.get('form_type', '10-K'),
+        )
+
+        if result:
+            return jsonify({
+                'success': True,
+                'ticker': ticker,
+                'content_length': content_len,
+                'composite_score': result.get('composite_score'),
+                'gem_potential': result.get('gem_potential'),
+                'result_preview': {k: v for k, v in result.items()
+                                   if k in ('composite_score', 'gem_potential',
+                                            'gem_reasoning', 'top_3_positives',
+                                            'top_3_concerns', 'model_used')},
+            })
+        else:
+            return jsonify({
+                'error': 'analyze_filing_tier1 returned None. API call may have failed or JSON parsing failed.',
+                'ticker': ticker, 'content_length': content_len,
+                'hint': 'Check Replit console for detailed error logs.',
+            }), 500
+
+    except Exception as e:
+        return jsonify({
+            'error': f'Exception during test: {str(e)}',
+            'ticker': ticker,
+        }), 500
+
+
+@app.route('/api/llm/gems')
+def get_gems():
+    """Get top gem candidates from LLM analysis"""
+    scraper = _get_scraper()
+
+    # Debug: count tier2 filings
+    tier2_filings = [f for f in scraper.filings_index if f.get('tier2_analyzed')]
+    logger.info(f"Gems endpoint: {len(tier2_filings)} tier2_analyzed filings")
+
+    # Get all filings with Tier 2 analysis
+    raw_gems = [
+        f for f in scraper.filings_index
+        if f.get('tier2_analyzed') and f.get('final_gem_score') is not None
+    ]
+
+    # Sort by gem score
+    raw_gems.sort(key=lambda x: x.get('final_gem_score', 0), reverse=True)
+
+    # Filter options
+    min_score = int(request.args.get('min_score', 0))
+    recommendation = request.args.get('recommendation', '')
+    conviction = request.args.get('conviction', '')
+
+    if min_score:
+        raw_gems = [g for g in raw_gems if g.get('final_gem_score', 0) >= min_score]
+    if recommendation:
+        raw_gems = [g for g in raw_gems if g.get('recommendation') == recommendation]
+    if conviction:
+        raw_gems = [g for g in raw_gems if g.get('conviction') == conviction]
+
+    # Build clean response objects (don't mutate filing index)
+    gems = []
+    for g in raw_gems[:50]:
+        entry = {
+            'ticker': g.get('ticker', ''),
+            'company_name': g.get('company_name', ''),
+            'exchange': g.get('exchange', ''),
+            'form_type': g.get('form_type', ''),
+            'filing_date': g.get('filing_date', ''),
+            'final_gem_score': g.get('final_gem_score'),
+            'conviction': g.get('conviction', ''),
+            'recommendation': g.get('recommendation', ''),
+            'tier1_score': g.get('tier1_score'),
+            'gem_potential': g.get('gem_potential', ''),
+            'tier2_result_file': g.get('tier2_result_file', ''),
+            'tier1_result_file': g.get('tier1_result_file', ''),
+            'has_prior_diff': g.get('has_prior_diff', False),
+            'diff_signal': g.get('diff_signal', ''),
+        }
+        # Load tier2 detail from file (onto copy, not original)
+        if g.get('tier2_result_file'):
+            result_path = os.path.join(app.config['RESULTS_FOLDER'], g['tier2_result_file'])
+            if os.path.exists(result_path):
+                try:
+                    with open(result_path) as rf:
+                        entry['tier2_detail'] = json.load(rf)
+                except Exception:
+                    pass
+        gems.append(entry)
+
+    return jsonify({
+        'total': len(raw_gems),
+        'gems': gems,
+    })
+
+
+@app.route('/api/llm/improving')
+def get_improving():
+    """Get companies showing improvement trajectory across any analysis type"""
+    scraper = _get_scraper()
+
+    def get_best_score(f):
+        """Get the best available score from any tier."""
+        if f.get('final_gem_score') is not None:
+            return f['final_gem_score'], 'tier2'
+        if f.get('tier1_score') is not None:
+            return f['tier1_score'], 'tier1'
+        if f.get('score') is not None:
+            return f['score'], 'batch'
+        return None, None
+
+    # Group filings by ticker
+    by_ticker = {}
+    for f in scraper.filings_index:
+        ticker = f.get('ticker', '')
+        if ticker:
+            if ticker not in by_ticker:
+                by_ticker[ticker] = []
+            by_ticker[ticker].append(f)
+
+    improving = []
+    for ticker, filings in by_ticker.items():
+        # Need at least 2 filings with any kind of score
+        scored = []
+        for f in filings:
+            score, tier = get_best_score(f)
+            if score is not None:
+                scored.append({
+                    'filing_date': f.get('filing_date', ''),
+                    'score': score,
+                    'tier': tier,
+                    'gem_potential': f.get('gem_potential'),
+                    'conviction': f.get('conviction'),
+                    'recommendation': f.get('recommendation'),
+                    'company_name': f.get('company_name', ''),
+                })
+        if len(scored) < 2:
+            continue
+
+        # Sort by date
+        scored.sort(key=lambda x: x['filing_date'])
+
+        # Calculate trajectory
+        oldest = scored[0]
+        newest = scored[-1]
+        score_change = newest['score'] - oldest['score']
+
+        if score_change >= 5:  # Improving threshold
+            improving.append({
+                'ticker': ticker,
+                'company_name': newest['company_name'],
+                'oldest_date': oldest['filing_date'],
+                'newest_date': newest['filing_date'],
+                'oldest_score': oldest['score'],
+                'newest_score': newest['score'],
+                'oldest_tier': oldest['tier'],
+                'newest_tier': newest['tier'],
+                'score_change': round(score_change, 1),
+                'filing_count': len(scored),
+                'gem_potential': newest.get('gem_potential'),
+                'conviction': newest.get('conviction'),
+                'recommendation': newest.get('recommendation'),
+                'trajectory': 'strongly_improving' if score_change >= 15 else 'improving',
+            })
+
+    # Sort by improvement amount
+    improving.sort(key=lambda x: x['score_change'], reverse=True)
+
+    return jsonify({
+        'total': len(improving),
+        'improving': improving[:50],
+    })
+
+
+@app.route('/api/scraper/results')
+def get_results():
+    """Get analyzed filings ranked by risk score"""
+    scraper = _get_scraper()
+    sort_by = request.args.get('sort', 'score_asc')
+    risk_filter = request.args.get('risk', '')
+    exchange_filter = request.args.get('exchange', '')
+    form_type_filter = request.args.get('form_type', '')
+    tier_filter = request.args.get('tier', '')
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 50))
+
+    results = scraper.get_results_ranked(
+        sort_by=sort_by, risk_filter=risk_filter,
+        exchange_filter=exchange_filter, form_type_filter=form_type_filter,
+        tier_filter=tier_filter,
+    )
+    start = (page - 1) * per_page
+    end = start + per_page
+
+    scores = [r.get('score', 50) for r in results if r.get('score') is not None]
+    risk_dist = {}
+    tier_dist = {"tier1": 0, "tier2": 0, "batch": 0}
+    for r in results:
+        rating = r.get('risk_rating', 'UNKNOWN')
+        if rating:
+            risk_dist[rating] = risk_dist.get(rating, 0) + 1
+        tier_dist[r.get('tier', 'batch')] = tier_dist.get(r.get('tier', 'batch'), 0) + 1
+
+    return jsonify({
+        'total': len(results), 'page': page, 'per_page': per_page,
+        'results': results[start:end],
+        'summary': {
+            'avg_score': round(sum(scores) / len(scores), 1) if scores else 0,
+            'min_score': min(scores) if scores else 0,
+            'max_score': max(scores) if scores else 0,
+            'risk_distribution': risk_dist,
+            'tier_distribution': tier_dist,
+        }
+    })
+
+
+@app.route('/api/scraper/result/<filename>')
+def get_result_detail(filename):
+    """Get full analysis result for a specific filing"""
+    filepath = os.path.join(app.config['RESULTS_FOLDER'], filename)
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Result not found'}), 404
+    with open(filepath) as f:
+        return jsonify(json.load(f))
+
+
+@app.route('/api/scraper/stocks')
+def get_stocks():
+    """Get stock-level aggregated results - one entry per ticker."""
+    scraper = _get_scraper()
+    sort_by = request.args.get('sort', 'score_desc')
+    exchange_filter = request.args.get('exchange', '')
+    min_score = request.args.get('min_score', 0)
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 50))
+
+    stocks = scraper.get_stocks_ranked(
+        sort_by=sort_by,
+        exchange_filter=exchange_filter,
+        min_score=min_score,
+    )
+    start = (page - 1) * per_page
+    end = start + per_page
+
+    # Summary stats
+    scores = [s['score'] for s in stocks]
+    tier_dist = {"tier2": 0, "tier1": 0, "batch": 0}
+    traj_dist = {}
+    for s in stocks:
+        tier_dist[s.get('best_tier', 'batch')] = tier_dist.get(s.get('best_tier', 'batch'), 0) + 1
+        t = s.get('trajectory', 'stable')
+        traj_dist[t] = traj_dist.get(t, 0) + 1
+
+    # Strip filings array from list view (too heavy), keep just counts
+    page_stocks = []
+    for s in stocks[start:end]:
+        entry = {k: v for k, v in s.items() if k != 'filings'}
+        page_stocks.append(entry)
+
+    return jsonify({
+        'total': len(stocks), 'page': page, 'per_page': per_page,
+        'stocks': page_stocks,
+        'summary': {
+            'avg_score': round(sum(scores) / len(scores), 1) if scores else 0,
+            'tier_distribution': tier_dist,
+            'trajectory_distribution': traj_dist,
+        }
+    })
+
+
+@app.route('/api/scraper/stock/<ticker>')
+def get_stock_detail(ticker):
+    """
+    Get full stock detail: summary data + all filing analyses.
+    This powers the stock detail modal.
+    """
+    ticker = ticker.upper()
+    scraper = _get_scraper()
+
+    # Get stock-level data
+    all_stocks = scraper.get_stocks_ranked(sort_by='score_desc')
+    stock = next((s for s in all_stocks if s['ticker'].upper() == ticker), None)
+
+    if not stock:
+        return jsonify({'error': f'No analyzed data for {ticker}'}), 404
+
+    # Load full analysis result files for each filing
+    for fl in stock.get('filings', []):
+        for key in ['tier2_result_file', 'tier1_result_file', 'result_file']:
+            rf = fl.get(key, '')
+            if rf:
+                result_path = os.path.join(app.config['RESULTS_FOLDER'], rf)
+                if os.path.exists(result_path):
+                    try:
+                        with open(result_path) as f:
+                            data = json.load(f)
+                        fl['analysis'] = {
+                            'one_liner': data.get('one_liner', ''),
+                            'gem_reasoning': data.get('gem_reasoning', ''),
+                            'investment_thesis': data.get('investment_thesis'),
+                            'deep_analysis': data.get('deep_analysis'),
+                            'filing_diff_insights': data.get('filing_diff_insights'),
+                            'forensics': data.get('forensics'),
+                            'filing_diff': data.get('filing_diff'),
+                            'top_3_positives': data.get('top_3_positives', []),
+                            'top_3_concerns': data.get('top_3_concerns', []),
+                            'dimensions': data.get('dimensions'),
+                            'insider_activity': data.get('insider_activity'),
+                            'insider_signal': data.get('insider_signal'),
+                            'financial_inflections': data.get('financial_inflections'),
+                            'financial_trajectory': data.get('financial_trajectory'),
+                        }
+                    except Exception:
+                        pass
+                break  # use best available result file
+
+    return jsonify(stock)
+
+
+# =========================================================================
+# DAILY MONITOR ROUTES
+# =========================================================================
+
+@app.route('/monitor')
+def monitor_page():
+    """Daily monitor dashboard"""
+    return render_template('monitor.html')
+
+
+@app.route('/api/monitor/status')
+def monitor_status():
+    """Get monitor state, scheduler status, and recent log"""
+    state = _get_monitor_state()
+    scheduler = _get_scheduler()
+    return jsonify({
+        "state": state.state,
+        "scheduler_running": scheduler.is_running,
+        "last_result": scheduler.last_result,
+        "recent_log": state.log[-30:],
+    })
+
+
+@app.route('/api/monitor/configure', methods=['POST'])
+def monitor_configure():
+    """Update monitor configuration"""
+    data = request.get_json() or {}
+    state = _get_monitor_state()
+
+    if 'run_time' in data:
+        rt = data['run_time'].strip()
+        try:
+            h, m = map(int, rt.split(":"))
+            if 0 <= h <= 23 and 0 <= m <= 59:
+                state.state["run_time"] = rt
+        except (ValueError, AttributeError):
+            return jsonify({'error': 'Invalid time format. Use HH:MM (24h)'}), 400
+
+    if 'auto_analyze' in data:
+        state.state["auto_analyze"] = bool(data['auto_analyze'])
+    if 'use_llm_for_auto' in data:
+        state.state["use_llm_for_auto"] = bool(data['use_llm_for_auto'])
+
+    state.save()
+    return jsonify({'success': True, 'state': state.state})
+
+
+@app.route('/api/monitor/start', methods=['POST'])
+def monitor_start():
+    """Start the daily scheduler"""
+    scraper = _get_scraper()
+    if not scraper.universe:
+        return jsonify({
+            'error': 'No company universe loaded. Run the scraper pipeline first.'
+        }), 400
+    scheduler = _get_scheduler()
+    scheduler.start()
+    return jsonify({'success': True, 'message': 'Daily monitor started'})
+
+
+@app.route('/api/monitor/stop', methods=['POST'])
+def monitor_stop():
+    """Stop the daily scheduler"""
+    scheduler = _get_scheduler()
+    scheduler.stop()
+    return jsonify({'success': True, 'message': 'Daily monitor stopped'})
+
+
+@app.route('/api/monitor/run-now', methods=['POST'])
+def monitor_run_now():
+    """Trigger an immediate check"""
+    scraper = _get_scraper()
+    if not scraper.universe:
+        return jsonify({
+            'error': 'No company universe loaded. Run the scraper pipeline first.'
+        }), 400
+
+    scheduler = _get_scheduler()
+
+    def do_run():
+        try:
+            scheduler.run_now()
+        except Exception as e:
+            logger.error(f"Manual check failed: {e}")
+
+    thread = threading.Thread(target=do_run, daemon=True)
+    thread.start()
+    return jsonify({'success': True, 'message': 'Check started. Poll /api/monitor/status for results.'})
+
+
+@app.route('/api/monitor/log')
+def monitor_log():
+    """Get the monitor run log"""
+    state = _get_monitor_state()
+    log = list(reversed(state.log))
+    page = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per_page', 30))
+    start = (page - 1) * per_page
+    return jsonify({
+        'total': len(log),
+        'page': page,
+        'entries': log[start:start + per_page],
+    })
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    print("=" * 60)
+    print("SEC Filing Analyzer")
+    print("=" * 60)
+    print(f"Starting server on port {port}")
+    print("Upload SEC filings (PDF, TXT, HTML) to analyze")
+    print("=" * 60)
+    app.run(debug=False, host='0.0.0.0', port=port)
